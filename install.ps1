@@ -10,7 +10,7 @@ $CONTACT_US    = "https://closed-ali.com/contact"              # shown in the ad
 $MIN_PYTHON = "3.8"
 $MIN_NODE   = "20.0"
 
-# ─── Logging - always on, appends per launch, copied to data dir on success ───
+# --- Logging - always on, appends per launch, copied to data dir on success ---
 $script:_logPath = "$env:TEMP\$($APP_NAME_LOW)_install.log"
 
 function Write-Log {
@@ -24,7 +24,7 @@ function Write-Log {
 ("=" * 60) | Add-Content -Path $script:_logPath -Encoding UTF8
 Write-Log "$APP_NAME $APP_VERSION  launched"
 
-# ─── Hide the PowerShell console immediately ─────────────────────────────────
+# --- Hide the PowerShell console immediately -------
 if (-not ([System.Management.Automation.PSTypeName]'ConsoleUtils.Window').Type) {
     Add-Type -Name Window -Namespace ConsoleUtils -MemberDefinition @"
 [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
@@ -39,7 +39,7 @@ $null = [ConsoleUtils.Window]::ShowWindow([ConsoleUtils.Window]::GetConsoleWindo
 # and crash with "You cannot call a method on a null-valued expression".
 try { [Console]::TreatControlCAsInput = $true } catch {}
 
-# ─── Single-instance check (named mutex) ─────────────────────────────────────
+# --- Single-instance check (named mutex) -----------
 $script:_mutex = New-Object System.Threading.Mutex($false, "Global\$($APP_NAME)_Setup_Mutex")
 if (-not $script:_mutex.WaitOne(0, $false)) {
     Add-Type -AssemblyName System.Windows.Forms
@@ -53,7 +53,7 @@ if (-not $script:_mutex.WaitOne(0, $false)) {
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-# ─── Icon: download to temp, shown in installer window, copied to install dir ─
+# --- Icon: download to temp, shown in installer window, copied to install dir -
 $script:iconTemp   = "$env:TEMP\$($APP_NAME_LOW)_setup.ico"
 $script:iconObject = $null   # System.Drawing.Icon  - for the form title bar (requires real .ico)
 $script:iconImage  = $null   # System.Drawing.Image - for PictureBox (accepts PNG, ICO, anything)
@@ -75,7 +75,7 @@ if ($ICON_URL) {
         exit
     }
 }
-# ─── Custom controls: DarkButton + GlowProgressBar + DarkMode ────────────────
+# --- Custom controls: DarkButton + GlowProgressBar + DarkMode ----------------
 $refs = @(
     [System.Reflection.Assembly]::GetAssembly([System.Windows.Forms.Control]).Location,
     [System.Reflection.Assembly]::GetAssembly([System.Drawing.Graphics]).Location
@@ -355,7 +355,7 @@ sh.Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Windo
 $FILE_DATA_LIB_ROUTER_PS1 = @'
 param([string]$Uri)
 
-$AppName = "ALI"
+$AppName = '__APP_NAME__'
 
 Add-Type -AssemblyName System.Windows.Forms
 
@@ -394,13 +394,13 @@ $FILE_DATA_LIB_STARTUP_VBS = @'
 Dim scriptDir, sh
 scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
 Set sh = CreateObject("WScript.Shell")
-sh.Run Chr(34) & scriptDir & "..\ALI.cmd" & Chr(34), 0, False
+sh.Run Chr(34) & scriptDir & "..\__APP_NAME__.cmd" & Chr(34), 0, False
 '@
 
 $FILE_DATA_LIB_UNINSTALL_PS1 = @'
 param([string]$PresetInstallDir = "")
 
-$AppName    = "ALI"
+$AppName    = '__APP_NAME__'
 $AppNameLow = $AppName.ToLower()
 $RegPath    = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$AppName"
 
@@ -695,7 +695,7 @@ Plugins you create are your own work. This license places no restrictions
 on the license you choose for your Plugins, provided the Plugin does not
 itself constitute a Competing Product.
 
-7. DISCLAIMER — USE AT YOUR OWN RISK
+7. DISCLAIMER - USE AT YOUR OWN RISK
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED. YOU USE THIS SOFTWARE ENTIRELY AT YOUR OWN RISK.
@@ -712,14 +712,14 @@ USE OR INABILITY TO USE THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
 OF SUCH DAMAGES.
 '@
 
-# ─── Encoding-safe file writer ────────────────────────────────────────────────
+# --- Encoding-safe file writer ----------------------
 function Write-File {
     param([string]$Path, [string]$Content, [switch]$Ascii)
     $enc = if ($Ascii) { [System.Text.Encoding]::ASCII } else { New-Object System.Text.UTF8Encoding($false) }
     [System.IO.File]::WriteAllText($Path, $Content, $enc)
 }
 
-# ─── Non-blocking subprocess helper ──────────────────────────────────────────
+# --- Non-blocking subprocess helper ----------------
 # Runs a process and pumps DoEvents every 50 ms while waiting, so the UI stays
 # responsive. Returns combined stdout+stderr trimmed - use for version commands
 # (python --version writes to stderr on Python 2).
@@ -741,7 +741,7 @@ function Invoke-Async {
     } catch { return '' }
 }
 
-# ─── Modern dark dialog (replaces MessageBox::Show) ──────────────────────────
+# --- Modern dark dialog (replaces MessageBox::Show) 
 function Show-Dialog {
     param([string]$Title, [string]$Message, [string[]]$Buttons = @("OK"))
     # Use a single-element array as a captured-by-reference result box.
@@ -810,7 +810,7 @@ function Show-Dialog {
     $d.ShowDialog() | Out-Null
     return $res[0]
 }
-# ─── Color palette ────────────────────────────────────────────────────────────
+# --- Color palette --------
 
 $C_BG      = [System.Drawing.Color]::FromArgb(13,  17,  23)
 $C_CARD    = [System.Drawing.Color]::FromArgb(22,  27,  34)
@@ -822,7 +822,7 @@ $C_TEXT    = [System.Drawing.Color]::FromArgb(240, 246, 252)
 $C_DIM     = [System.Drawing.Color]::FromArgb(139, 148, 158)
 $C_SUCCESS = [System.Drawing.Color]::FromArgb(63,  185, 80)
 $C_DANGER  = [System.Drawing.Color]::FromArgb(248, 81,  73)
-# ─── Control factories ────────────────────────────────────────────────────────
+# --- Control factories ----
 function New-Label {
     param(
         [string]$Text,
@@ -860,7 +860,7 @@ function New-ActionButton {
     $b.Corner   = 0
     return $b
 }
-# ─── Main form ────────────────────────────────────────────────────────────────
+# --- Main form ------------
 $form                 = New-Object System.Windows.Forms.Form
 $form.Text            = "$APP_NAME $APP_VERSION Setup"
 $form.ClientSize      = New-Object System.Drawing.Size(540, 475)
@@ -899,7 +899,7 @@ $form.Add_FormClosed({
     }
 })
 
-# ─── Header: y=0, h=80 ────────────────────────────────────────────────────────
+# --- Header: y=0, h=80 ----
 $header           = New-Object System.Windows.Forms.Panel
 $header.Location  = New-Object System.Drawing.Point(0, 0)
 $header.Size      = New-Object System.Drawing.Size(540, 80)
@@ -929,21 +929,21 @@ if ($script:iconImage) {
 $header.Controls.AddRange(@($picIcon, $lblTitle, $lblSubtitle))
 $form.Controls.Add($header)
 
-# ─── Accent separator: y=80, h=2 ──────────────────────────────────────────────
+# --- Accent separator: y=80, h=2 --------------------
 $hdrLine           = New-Object System.Windows.Forms.Panel
 $hdrLine.Location  = New-Object System.Drawing.Point(0, 80)
 $hdrLine.Size      = New-Object System.Drawing.Size(540, 2)
 $hdrLine.BackColor = $C_PRIMARY
 $form.Controls.Add($hdrLine)
 
-# ─── Content: y=82, h=263 ─────────────────────────────────────────────────────
+# --- Content: y=82, h=263 -
 $body           = New-Object System.Windows.Forms.Panel
 $body.Location  = New-Object System.Drawing.Point(0, 82)
 $body.Size      = New-Object System.Drawing.Size(540, 338)
 $body.BackColor = $C_BG
 $form.Controls.Add($body)
 
-# ─── Footer: y=345, h=55 ──────────────────────────────────────────────────────
+# --- Footer: y=345, h=55 --
 $footer           = New-Object System.Windows.Forms.Panel
 $footer.Location  = New-Object System.Drawing.Point(0, 420)
 $footer.Size      = New-Object System.Drawing.Size(540, 55)
@@ -966,7 +966,7 @@ $btnNext.PressColor  = [System.Drawing.Color]::FromArgb(17,  88, 199)
 $footer.Controls.AddRange(@($btnBack, $btnNext, $btnCancel))
 $form.Controls.Add($footer)
 
-# ─── Page factory ─────────────────────────────────────────────────────────────
+# --- Page factory ---------
 function New-Page {
     $p           = New-Object System.Windows.Forms.Panel
     $p.Location  = New-Object System.Drawing.Point(0, 0)
@@ -982,14 +982,14 @@ function New-Page {
 $pgWelcome = New-Page
 $pgWelcome.Controls.AddRange(@(
     (New-Label "Welcome to $APP_NAME Setup" 30 28 480 34 16 Bold   $C_TEXT),
-    (New-Label "Version $APP_VERSION  -  ALI Source License  -  Open Source" 33 70 480 20 9 Regular $C_DIM),
+    (New-Label "Version $APP_VERSION  -  $APP_NAME Source License  -  Open Source" 33 70 480 20 9 Regular $C_DIM),
     (New-Label "This wizard will guide you through installing $APP_NAME" 30 112 480 20 10 Regular $C_TEXT),
     (New-Label "on your computer." 30 134 480 20 10 Regular $C_TEXT),
     (New-Label "Click Next to begin." 30 172 480 20 10 Regular $C_DIM),
     (New-Label "Creator"        30  218  68 18 9 Bold    $C_DIM),
     (New-Label "Wizard Burgil 42" 104 218 200 18 9 Regular $C_ACCENT),
     (New-Label "License"        312 218  52 18 9 Bold    $C_DIM),
-    (New-Label "ALI Source License" 370 218 160 18 9 Regular $C_DIM)
+    (New-Label "$APP_NAME Source License" 370 218 160 18 9 Regular $C_DIM)
 ))
 # =============================================================================
 # PAGE 1 - LICENSE
@@ -1036,20 +1036,20 @@ function New-LicItem([string]$t, [int]$x, [int]$y, [System.Drawing.Color]$c, [st
 
 # CAN DO -- col 1 (x=30) and col 2 (x=152)
 $pgLicense.Controls.AddRange(@(
-    (New-LicItem "$chk Personal use"      30  181 $C_SUCCESS "Use ALI freely for personal projects, learning, and experimentation"),
-    (New-LicItem "$chk Build plugins"    152  181 $C_SUCCESS "Create extensions and integrations that work with and depend on ALI"),
+    (New-LicItem "$chk Personal use"      30  181 $C_SUCCESS "Use $APP_NAME freely for personal projects, learning, and experimentation"),
+    (New-LicItem "$chk Build plugins"    152  181 $C_SUCCESS "Create extensions and integrations that work with and depend on $APP_NAME"),
     (New-LicItem "$chk Modify source"     30  198 $C_SUCCESS "Edit the source code to suit your personal or internal needs"),
     (New-LicItem "$chk Share plugins"    152  198 $C_SUCCESS "Distribute your plugins to others under any license you choose"),
-    (New-LicItem "$chk Run internally"    30  215 $C_SUCCESS "Deploy ALI within your organization for internal business use"),
+    (New-LicItem "$chk Run internally"    30  215 $C_SUCCESS "Deploy $APP_NAME within your organization for internal business use"),
     (New-LicItem "$chk Use licensed code" 152 215 $C_SUCCESS "Incorporate third-party libraries in your plugins if their license permits")
 ))
 
 # CANNOT -- col 3 (x=276) and col 4 (x=396)
 $pgLicense.Controls.AddRange(@(
-    (New-LicItem "$xmk Compete with ALI"    276 181 $C_DANGER "Do not build a product whose primary purpose overlaps with ALI's core functionality"),
-    (New-LicItem "$xmk Violate local laws"  396 181 $C_DANGER "You must verify that using ALI is legal in your country or region before installing"),
-    (New-LicItem "$xmk Redistribute ALI"    276 198 $C_DANGER "Do not package or distribute ALI itself without prior written permission from the authors"),
-    (New-LicItem "$xmk Illegal/harmful use" 396 198 $C_DANGER "Do not use ALI for fraud, malware, unauthorized system access, or any harmful activity"),
+    (New-LicItem "$xmk Compete with $APP_NAME"    276 181 $C_DANGER "Do not build a product whose primary purpose overlaps with $APP_NAME's core functionality"),
+    (New-LicItem "$xmk Violate local laws"  396 181 $C_DANGER "You must verify that using $APP_NAME is legal in your country or region before installing"),
+    (New-LicItem "$xmk Redistribute $APP_NAME"    276 198 $C_DANGER "Do not package or distribute $APP_NAME itself without prior written permission from the authors"),
+    (New-LicItem "$xmk Illegal/harmful use" 396 198 $C_DANGER "Do not use $APP_NAME for fraud, malware, unauthorized system access, or any harmful activity"),
     (New-LicItem "$xmk Remove notices"      276 215 $C_DANGER "Do not remove or alter any copyright, license, or attribution notices in the source"),
     (New-LicItem "$xmk Hold liable"         396 215 $C_DANGER "Authors are not liable for any damages - you use this software entirely at your own risk")
 ))
@@ -1126,19 +1126,19 @@ function Update-DepStatus {
     # Guard every state change so navigating away doesn't corrupt the new page.
     if ($script:idx -ne 2) { return }
 
-    # ── Python: existence ─────────────────────────────────────────────────────
+    # -- Python: existence -
     $hasPy = [bool]((Invoke-Async 'where.exe' 'python').Trim())
     if ($script:idx -ne 2) { return }
     if ($hasPy) { $lblPyStatus.Text = "Detected..."; $lblPyStatus.ForeColor = $C_SUCCESS }
     else        { $lblPyStatus.Text = "Not found";   $lblPyStatus.ForeColor = $C_DANGER; $btnGetPy.Visible = $true }
 
-    # ── Node: existence ───────────────────────────────────────────────────────
+    # -- Node: existence ---
     $hasNode = [bool]((Invoke-Async 'where.exe' 'node').Trim())
     if ($script:idx -ne 2) { return }
     if ($hasNode) { $lblNodeStatus.Text = "Detected..."; $lblNodeStatus.ForeColor = $C_SUCCESS }
     else          { $lblNodeStatus.Text = "Not found";   $lblNodeStatus.ForeColor = $C_DANGER; $btnGetNode.Visible = $true }
 
-    # ── Python version, then pip appended ────────────────────────────────────
+    # -- Python version, then pip appended ----------
     if ($hasPy) {
         $raw   = Invoke-Async 'python' '--version'
         if ($script:idx -ne 2) { return }
@@ -1151,7 +1151,7 @@ function Update-DepStatus {
         if ($pipVer) { $lblPyStatus.Text = "$pyVer  /  pip $pipVer" }
     }
 
-    # ── Node version, then npm appended ──────────────────────────────────────
+    # -- Node version, then npm appended ------------
     if ($hasNode) {
         $raw     = Invoke-Async 'node' '--version'
         if ($script:idx -ne 2) { return }
@@ -1164,7 +1164,7 @@ function Update-DepStatus {
         if ($npmVer) { $lblNodeStatus.Text = "v$nodeVer  /  npm $npmVer" }
     }
 
-    # ── Enable Next only after ALL checks complete ────────────────────────────
+    # -- Enable Next only after ALL checks complete --
     Write-Log ("Dep check done -- python={0} node={1}" -f $lblPyStatus.Text, $lblNodeStatus.Text)
     if (-not $hasPy)   { Write-Log "Python not found" "WARN" }
     if (-not $hasNode) { Write-Log "Node.js not found" "WARN" }
@@ -1253,7 +1253,7 @@ $chkOpenWith  = New-OptChk "Right-click menu"         30  274
 $chkFileAssoc = New-OptChk "File type (.ali)"        285 274
 $chkNewMenu   = New-OptChk "New menu (.ali)"         285 298
 
-# New menu requires file type — disable it when file type is unchecked
+# New menu requires file type - disable it when file type is unchecked
 $chkFileAssoc.Add_CheckedChanged({
     if (-not $chkFileAssoc.Checked) {
         $chkNewMenu.Checked = $false
@@ -1425,7 +1425,7 @@ $btnReinstClose  = New-ActionButton "Cancel" 330 158 90 32
 $btnUninstReinst.NormalColor = [System.Drawing.Color]::FromArgb(58, 15, 12)
 $btnUninstReinst.ForeColor   = $C_DANGER
 
-# ── Update check logic ───────────────────────────────────────────────────────
+# -- Update check logic ---
 $script:_recheckTimer = $null
 
 function Check-ForUpdate {
@@ -1753,12 +1753,12 @@ $pgUpdate.Controls.AddRange(@(
     $txtChangelog, $chkUpdateLicense,
     $btnApplyUpdate, $btnSkipUpdate, $btnUpdateClose
 ))
-# ─── Page list ────────────────────────────────────────────────────────────────
+# --- Page list ------------
 $allPages  = @($pgWelcome, $pgLicense, $pgDeps, $pgLocation, $pgConfirm, $pgInstall, $pgDone)
 $pageNames = @("Welcome", "License Agreement", "Requirements", "Install Location", "Ready to Install", "Installing...", "Installation Complete")
 $script:idx = 0
 $script:skipCloseConfirm = $false
-# ─── Install helpers ──────────────────────────────────────────────────────────
+# --- Install helpers ------
 function Clear-InstallAttributes {
     param([string]$Path)
     Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue |
@@ -1774,7 +1774,7 @@ function Remove-ExistingInstall {
     # Move Win32 CWD away so this process doesn't hold a handle on $Path
     try { [System.IO.Directory]::SetCurrentDirectory($env:TEMP) } catch {}
 
-    # ── 1. Registry and shortcut cleanup first ────────────────────────────────
+    # -- 1. Registry and shortcut cleanup first ------
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$APP_NAME_LOW\ShellNew" -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$APP_NAME_LOW"          -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\$APP_NAME.File"          -Recurse -Force -ErrorAction SilentlyContinue
@@ -1797,7 +1797,7 @@ function Remove-ExistingInstall {
     $updLink = Join-Path $Path "Check for Updates.lnk"
     if (Test-Path $updLink) { Remove-Item $updLink -Force -ErrorAction SilentlyContinue }
 
-    # ── 2. Flush Explorer shell cache AFTER registry keys are gone ────────────
+    # -- 2. Flush Explorer shell cache AFTER registry keys are gone ------------
     #    This makes Explorer release icon handles for .ali files and the folder
     if (-not ([System.Management.Automation.PSTypeName]'ShellNotify').Type) {
         Add-Type @"
@@ -1812,7 +1812,7 @@ public class ShellNotify {
     [ShellNotify]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep -Milliseconds 800
 
-    # ── 3. Clear file attributes then delete ──────────────────────────────────
+    # -- 3. Clear file attributes then delete --------
     $desktopIni = Join-Path $Path "desktop.ini"
     if (Test-Path $desktopIni -ErrorAction SilentlyContinue) {
         try { (Get-Item $desktopIni -Force).Attributes = [System.IO.FileAttributes]::Normal } catch {}
@@ -1831,11 +1831,11 @@ public class ShellNotify {
         Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c rd /s /q `"$Path`"" -Wait -WindowStyle Hidden
     }
 }
-# ─── Installation ─────────────────────────────────────────────────────────────
+# --- Installation ---------
 function Start-Installation {
     $dir    = $txtDir.Text
     $data   = "$dir\data"
-    $src    = "$data\src"
+    $app    = "$data\app"
     $lib    = "$data\lib"
     $assets = "$data\assets"
     $logs   = "$data\logs"
@@ -1847,7 +1847,7 @@ function Start-Installation {
            Action = {
                New-Item -ItemType Directory -Force -Path $dir    | Out-Null
                New-Item -ItemType Directory -Force -Path $data   | Out-Null
-               New-Item -ItemType Directory -Force -Path $src    | Out-Null
+               New-Item -ItemType Directory -Force -Path $app    | Out-Null
                New-Item -ItemType Directory -Force -Path $lib    | Out-Null
                New-Item -ItemType Directory -Force -Path $assets | Out-Null
                New-Item -ItemType Directory -Force -Path $logs   | Out-Null
@@ -1861,10 +1861,10 @@ function Start-Installation {
            }},
 
         @{ Pct = 24; Msg = "Writing app.py...";
-           Action = { Write-File "$src\app.py"  $FILE_DATA_SRC_APP_PY }},
+           Action = { Write-File "$app\app.py"  $FILE_DATA_SRC_APP_PY }},
 
         @{ Pct = 33; Msg = "Writing app.js...";
-           Action = { Write-File "$src\app.js"  $FILE_DATA_SRC_APP_JS }},
+           Action = { Write-File "$app\app.js"  $FILE_DATA_SRC_APP_JS }},
 
         @{ Pct = 42; Msg = "Writing LICENSE...";
            Action = { Write-File "$dir\LICENSE.txt"  $FILE_LICENSE_TXT }},
@@ -1906,15 +1906,20 @@ function Start-Installation {
 
         @{ Pct = 65; Msg = "Writing data\lib files...";
            Action = {
-               Write-File "$lib\router.ps1"  $FILE_DATA_LIB_ROUTER_PS1
+               $routerContent = $FILE_DATA_LIB_ROUTER_PS1 -replace '__APP_NAME__', $APP_NAME
+               Write-File "$lib\router.ps1"  $routerContent
                Write-File "$lib\router.vbs"  $FILE_DATA_LIB_ROUTER_VBS  -Ascii
                Write-File "$lib\sendto.vbs"  $FILE_DATA_LIB_SENDTO_VBS  -Ascii
-               Write-File "$lib\startup.vbs"      $FILE_DATA_LIB_STARTUP_VBS      -Ascii
+               $startupContent = $FILE_DATA_LIB_STARTUP_VBS -replace '__APP_NAME__', $APP_NAME
+               Write-File "$lib\startup.vbs"      $startupContent      -Ascii
                Write-File "$lib\check-update.vbs" $FILE_DATA_LIB_CHECK_UPDATE_VBS -Ascii
            }},
 
         @{ Pct = 72; Msg = "Writing data\lib\uninstall.ps1...";
-           Action = { Write-File "$lib\uninstall.ps1" $FILE_DATA_LIB_UNINSTALL_PS1 }},
+           Action = {
+               $uninstContent = $FILE_DATA_LIB_UNINSTALL_PS1 -replace '__APP_NAME__', $APP_NAME
+               Write-File "$lib\uninstall.ps1" $uninstContent
+           }},
 
         @{ Pct = 74; Msg = "Writing data\lib\uninstall.vbs...";
            Action = { Write-File "$lib\uninstall.vbs" $FILE_DATA_LIB_UNINSTALL_VBS -Ascii }},
@@ -2156,7 +2161,7 @@ public class ShellNotify {
 
     Show-Page 6
 }
-# ─── Navigation ───────────────────────────────────────────────────────────────
+# --- Navigation -----------
 function Show-Page([int]$n) {
     if ($script:_depTimer) { $script:_depTimer.Stop() }  # cancel any pending dep check
     Write-Log "Show-Page $n ($($pageNames[$n]))"
@@ -2223,7 +2228,7 @@ function Show-Page([int]$n) {
         }
     }
 }
-# ─── Button handlers ──────────────────────────────────────────────────────────
+# --- Button handlers ------
 $btnNext.Add_Click({
     if ($script:idx -eq 6) {
         Write-Log "Finish clicked"
@@ -2251,7 +2256,7 @@ $btnBack.Add_Click({
 })
 
 $btnCancel.Add_Click({ $form.Close() })
-# ─── Run ──────────────────────────────────────────────────────────────────────
+# --- Run ------------------
 $form.Add_Load({
     $regPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$APP_NAME"
     $props   = Get-ItemProperty $regPath -ErrorAction SilentlyContinue
@@ -2275,4 +2280,9 @@ $form.Add_Load({
         Show-Page 0
     }
 })
-[System.Windows.Forms.Application]::Run($form)
+try {
+    [System.Windows.Forms.Application]::Run($form)
+} finally {
+    try { $script:_mutex.ReleaseMutex() } catch {}
+    $script:_mutex.Dispose()
+}
