@@ -1,0 +1,21 @@
+{
+  "version": "1.0.1",
+  "fromVersion": "1.0.0",
+  "date": "2026-03-22",
+  "description": "Bug fixes and improvements",
+  "changelog": [
+    "Fixed: App crash on startup when no internet connection",
+    "Added: Dark mode support for the main interface",
+    "Improved: Startup time reduced by 40%",
+    "Removed: Deprecated legacy API endpoint"
+  ],
+  "requiresLicense": false,
+  "newLicense": null,
+  "actions": [
+    { "type": "write", "path": "data/app.py", "source": "files/app.py" },
+    { "type": "write", "path": "data/app.js", "source": "files/app.js" },
+    { "type": "delete", "path": "data/old_module.py" },
+    { "type": "mkdir", "path": "data/plugins" },
+    { "type": "run", "command": "echo Patch applied successfully", "workdir": "." }
+  ]
+}
