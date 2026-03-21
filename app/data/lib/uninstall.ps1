@@ -143,7 +143,7 @@ $frm.Controls.AddRange(@($icoLbl, $lbl1, $lbl2, $lbl3, $btnYes, $btnNo))
 
 $btnNo.Add_Click({
     if ($script:uninstallDone -and (Test-Path $InstallDir)) {
-        Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c for /l %i in (1,1,6) do (rd /s /q `"$InstallDir`" >nul 2>&1 & if not exist `"$InstallDir`" exit /b 0 & ping 127.0.0.1 -n 2 >nul)" -WindowStyle Hidden
+        Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c for /l %i in (1,1,6) do (rd /s /q `"$InstallDir`" >nul 2>&1 & if not exist `"$InstallDir`" exit /b 0 & ping localhost -n 2 >nul)" -WindowStyle Hidden
     }
     $frm.Close()
 })
@@ -190,7 +190,7 @@ $btnYes.Add_Click({
         Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c rd /s /q `"$InstallDir`"" -Wait -WindowStyle Hidden
     }
     if (Test-Path $InstallDir) {
-        Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c for /l %i in (1,1,6) do (rd /s /q `"$InstallDir`" >nul 2>&1 & if not exist `"$InstallDir`" exit /b 0 & ping 127.0.0.1 -n 2 >nul)" -Wait -WindowStyle Hidden
+        Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c for /l %i in (1,1,6) do (rd /s /q `"$InstallDir`" >nul 2>&1 & if not exist `"$InstallDir`" exit /b 0 & ping localhost -n 2 >nul)" -Wait -WindowStyle Hidden
     }
 
     $icoLbl.Text      = [char]0x2713

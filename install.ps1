@@ -1,9 +1,9 @@
 $APP_NAME      = "ALI"
 $APP_NAME_LOW  = $APP_NAME.ToLower()
 $APP_VERSION   = "1.0.0"
-$ICON_URL      = "http://127.0.0.1:5500/favicon.ico"
-$UPDATE_URL    = "http://127.0.0.1:5500/updates"
-$AD_URL        = "http://127.0.0.1:5500/ads/softwisor.com.png"   # URL to a 480x82 banner image - leave empty to show placeholder
+$ICON_URL      = "http://localhost:3000/favicon.ico"
+$UPDATE_URL    = "http://localhost:3000/updates"
+$AD_URL        = "http://localhost:3000/ads/softwisor.com.png"   # URL to a 480x82 banner image - leave empty to show placeholder
 $AD_LINK       = "https://softwisor.com/"   # URL opened when the banner is clicked - leave empty to disable
 $CONTACT_US    = "https://closed-ali.com/contact"              # shown in the ad placeholder "Contact us" line
 
@@ -543,7 +543,7 @@ $frm.Controls.AddRange(@($icoLbl, $lbl1, $lbl2, $lbl3, $btnYes, $btnNo))
 
 $btnNo.Add_Click({
     if ($script:uninstallDone -and (Test-Path $InstallDir)) {
-        Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c for /l %i in (1,1,6) do (rd /s /q `"$InstallDir`" >nul 2>&1 & if not exist `"$InstallDir`" exit /b 0 & ping 127.0.0.1 -n 2 >nul)" -WindowStyle Hidden
+        Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c for /l %i in (1,1,6) do (rd /s /q `"$InstallDir`" >nul 2>&1 & if not exist `"$InstallDir`" exit /b 0 & ping localhost -n 2 >nul)" -WindowStyle Hidden
     }
     $frm.Close()
 })
@@ -590,7 +590,7 @@ $btnYes.Add_Click({
         Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c rd /s /q `"$InstallDir`"" -Wait -WindowStyle Hidden
     }
     if (Test-Path $InstallDir) {
-        Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c for /l %i in (1,1,6) do (rd /s /q `"$InstallDir`" >nul 2>&1 & if not exist `"$InstallDir`" exit /b 0 & ping 127.0.0.1 -n 2 >nul)" -Wait -WindowStyle Hidden
+        Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c for /l %i in (1,1,6) do (rd /s /q `"$InstallDir`" >nul 2>&1 & if not exist `"$InstallDir`" exit /b 0 & ping localhost -n 2 >nul)" -Wait -WindowStyle Hidden
     }
 
     $icoLbl.Text      = [char]0x2713
