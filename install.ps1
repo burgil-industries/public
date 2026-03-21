@@ -1034,7 +1034,7 @@ function New-LicItem([string]$t, [int]$x, [int]$y, [System.Drawing.Color]$c, [st
     return $lbl
 }
 
-# CAN DO -- col 1 (x=30) and col 2 (x=152)
+# CAN DO - col 1 (x=30) and col 2 (x=152)
 $pgLicense.Controls.AddRange(@(
     (New-LicItem "$chk Personal use"      30  181 $C_SUCCESS "Use $APP_NAME freely for personal projects, learning, and experimentation"),
     (New-LicItem "$chk Build plugins"    152  181 $C_SUCCESS "Create extensions and integrations that work with and depend on $APP_NAME"),
@@ -1044,7 +1044,7 @@ $pgLicense.Controls.AddRange(@(
     (New-LicItem "$chk Use licensed code" 152 215 $C_SUCCESS "Incorporate third-party libraries in your plugins if their license permits")
 ))
 
-# CANNOT -- col 3 (x=276) and col 4 (x=396)
+# CANNOT - col 3 (x=276) and col 4 (x=396)
 $pgLicense.Controls.AddRange(@(
     (New-LicItem "$xmk Compete with $APP_NAME"    276 181 $C_DANGER "Do not build a product whose primary purpose overlaps with $APP_NAME's core functionality"),
     (New-LicItem "$xmk Violate local laws"  396 181 $C_DANGER "You must verify that using $APP_NAME is legal in your country or region before installing"),
@@ -1057,7 +1057,7 @@ $pgLicense.Controls.AddRange(@(
 # --- Disclaimer note ---
 $warn = [char]0x26A0
 $licWarn           = New-Object System.Windows.Forms.Label
-$licWarn.Text      = "$warn  Used at your own risk -- no warranty, no liability for any damages or losses. You are solely responsible for ensuring use is legal in your region."
+$licWarn.Text      = "$warn  Used at your own risk - no warranty, no liability for any damages or losses. You are solely responsible for ensuring use is legal in your region."
 $licWarn.Location  = New-Object System.Drawing.Point(30, 247)
 $licWarn.Size      = New-Object System.Drawing.Size(480, 30)
 $licWarn.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
@@ -1126,19 +1126,19 @@ function Update-DepStatus {
     # Guard every state change so navigating away doesn't corrupt the new page.
     if ($script:idx -ne 2) { return }
 
-    # -- Python: existence -
+    # - Python: existence -
     $hasPy = [bool]((Invoke-Async 'where.exe' 'python').Trim())
     if ($script:idx -ne 2) { return }
     if ($hasPy) { $lblPyStatus.Text = "Detected..."; $lblPyStatus.ForeColor = $C_SUCCESS }
     else        { $lblPyStatus.Text = "Not found";   $lblPyStatus.ForeColor = $C_DANGER; $btnGetPy.Visible = $true }
 
-    # -- Node: existence ---
+    # - Node: existence ---
     $hasNode = [bool]((Invoke-Async 'where.exe' 'node').Trim())
     if ($script:idx -ne 2) { return }
     if ($hasNode) { $lblNodeStatus.Text = "Detected..."; $lblNodeStatus.ForeColor = $C_SUCCESS }
     else          { $lblNodeStatus.Text = "Not found";   $lblNodeStatus.ForeColor = $C_DANGER; $btnGetNode.Visible = $true }
 
-    # -- Python version, then pip appended ----------
+    # - Python version, then pip appended ----------
     if ($hasPy) {
         $raw   = Invoke-Async 'python' '--version'
         if ($script:idx -ne 2) { return }
@@ -1151,7 +1151,7 @@ function Update-DepStatus {
         if ($pipVer) { $lblPyStatus.Text = "$pyVer  /  pip $pipVer" }
     }
 
-    # -- Node version, then npm appended ------------
+    # - Node version, then npm appended ------------
     if ($hasNode) {
         $raw     = Invoke-Async 'node' '--version'
         if ($script:idx -ne 2) { return }
@@ -1164,8 +1164,8 @@ function Update-DepStatus {
         if ($npmVer) { $lblNodeStatus.Text = "v$nodeVer  /  npm $npmVer" }
     }
 
-    # -- Enable Next only after ALL checks complete --
-    Write-Log ("Dep check done -- python={0} node={1}" -f $lblPyStatus.Text, $lblNodeStatus.Text)
+    # - Enable Next only after ALL checks complete --
+    Write-Log ("Dep check done - python={0} node={1}" -f $lblPyStatus.Text, $lblNodeStatus.Text)
     if (-not $hasPy)   { Write-Log "Python not found" "WARN" }
     if (-not $hasNode) { Write-Log "Node.js not found" "WARN" }
     if ($script:idx -eq 2) { $btnNext.Enabled = $hasPy -and $hasNode }
@@ -1425,7 +1425,7 @@ $btnReinstClose  = New-ActionButton "Cancel" 330 158 90 32
 $btnUninstReinst.NormalColor = [System.Drawing.Color]::FromArgb(58, 15, 12)
 $btnUninstReinst.ForeColor   = $C_DANGER
 
-# -- Update check logic ---
+# - Update check logic ---
 $script:_recheckTimer = $null
 
 function Check-ForUpdate {
@@ -1655,7 +1655,7 @@ $btnApplyUpdate.Add_Click({
     try {
         for ($pi = 0; $pi -lt $chain.Count; $pi++) {
             $patch = $chain[$pi]
-            Write-Log "Update: patch $($pi+1)/$($chain.Count) -- v$($patch.version)"
+            Write-Log "Update: patch $($pi+1)/$($chain.Count) - v$($patch.version)"
             $lblUpdateDesc.Text      = "Applying v$($patch.version)... ($($pi+1)/$($chain.Count))"
             $lblUpdateDesc.ForeColor = $C_DIM
             [System.Windows.Forms.Application]::DoEvents()
@@ -1774,7 +1774,7 @@ function Remove-ExistingInstall {
     # Move Win32 CWD away so this process doesn't hold a handle on $Path
     try { [System.IO.Directory]::SetCurrentDirectory($env:TEMP) } catch {}
 
-    # -- 1. Registry and shortcut cleanup first ------
+    # - 1. Registry and shortcut cleanup first ------
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$APP_NAME_LOW\ShellNew" -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$APP_NAME_LOW"          -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\$APP_NAME.File"          -Recurse -Force -ErrorAction SilentlyContinue
@@ -1797,7 +1797,7 @@ function Remove-ExistingInstall {
     $updLink = Join-Path $Path "Check for Updates.lnk"
     if (Test-Path $updLink) { Remove-Item $updLink -Force -ErrorAction SilentlyContinue }
 
-    # -- 2. Flush Explorer shell cache AFTER registry keys are gone ------------
+    # - 2. Flush Explorer shell cache AFTER registry keys are gone ------------
     #    This makes Explorer release icon handles for .ali files and the folder
     if (-not ([System.Management.Automation.PSTypeName]'ShellNotify').Type) {
         Add-Type @"
@@ -1812,7 +1812,7 @@ public class ShellNotify {
     [ShellNotify]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep -Milliseconds 800
 
-    # -- 3. Clear file attributes then delete --------
+    # - 3. Clear file attributes then delete --------
     $desktopIni = Join-Path $Path "desktop.ini"
     if (Test-Path $desktopIni -ErrorAction SilentlyContinue) {
         try { (Get-Item $desktopIni -Force).Attributes = [System.IO.FileAttributes]::Normal } catch {}
@@ -2136,7 +2136,7 @@ public class ShellNotify {
            }}
     )
 
-    Write-Log "Installation started -- dir: $dir"
+    Write-Log "Installation started - dir: $dir"
     Write-Log ("Features: shortcut={0} startup={1} path={2} context-menu={3} send-to={4} start-menu={5} file-assoc={6} new-menu={7}" -f
         $chkShortcut.Checked, $chkStartup.Checked, $chkAddPath.Checked,
         $chkOpenWith.Checked, $chkSendTo.Checked, $chkStartMenu.Checked, $chkFileAssoc.Checked, $chkNewMenu.Checked)
