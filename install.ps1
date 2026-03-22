@@ -11,7 +11,9 @@ $MIN_PYTHON = "3.8"
 $MIN_NODE   = "20.0"
 
 # --- Logging - always on, appends per launch, copied to data dir on success ---
-$script:_logPath = "$env:TEMP\$($APP_NAME_LOW)_install.log"
+$script:_logPath  = "$env:TEMP\$($APP_NAME_LOW)_install.log"
+$script:_selfPath    = $PSCommandPath   # path of the running install.ps1 (empty if run via iex)
+$script:_selfScript  = if (-not $PSCommandPath) { $MyInvocation.MyCommand.ScriptBlock.ToString() } else { $null }
 
 function Write-Log {
     param([string]$Msg, [string]$Level = "INFO")
@@ -308,7 +310,6 @@ $FILE_DATA___APP_NAME___CMD = @'
 @echo off
 call python "%~dp0src\app.py"
 call node   "%~dp0src\app.js"
-pause
 '@
 
 $FILE_DATA_LIB_CHECK_UPDATE_PS1 = @'
@@ -1773,6 +1774,17 @@ $btnRecheck.Add_Click({
 
 $btnRepair.Add_Click({
     Write-Log "Repair/reinstall selected"
+    if (Test-AliRunning) {
+        $choice = Show-Dialog "$APP_NAME is Running" "$APP_NAME is currently running in the background.`nPlease close it before repairing." @("Close $APP_NAME", "Cancel")
+        if ($choice -eq "Close $APP_NAME") {
+            Stop-AliProcess
+            Start-Sleep -Milliseconds 800
+            if (Test-AliRunning) {
+                Show-Dialog "Could Not Close $APP_NAME" "$APP_NAME is still running. Please close it manually and try again." @("OK")
+                return
+            }
+        } else { return }
+    }
     if ($script:_recheckTimer) { $script:_recheckTimer.Stop() }
     if ($script:existingInstallDir -and (Test-Path $script:existingInstallDir)) {
         Clear-InstallAttributes $script:existingInstallDir
@@ -1785,6 +1797,17 @@ $btnRepair.Add_Click({
 
 $btnUninstReinst.Add_Click({
     Write-Log "Uninstall selected from maintenance page"
+    if (Test-AliRunning) {
+        $choice = Show-Dialog "$APP_NAME is Running" "$APP_NAME is currently running in the background.`nPlease close it before uninstalling." @("Close $APP_NAME", "Cancel")
+        if ($choice -eq "Close $APP_NAME") {
+            Stop-AliProcess
+            Start-Sleep -Milliseconds 800
+            if (Test-AliRunning) {
+                Show-Dialog "Could Not Close $APP_NAME" "$APP_NAME is still running. Please close it manually and try again." @("OK")
+                return
+            }
+        } else { return }
+    }
     if ($script:_recheckTimer) { $script:_recheckTimer.Stop() }
     $dir = $script:existingInstallDir
     $lblReinstTitle.Text      = "Uninstalling..."
@@ -1911,6 +1934,17 @@ function Show-UpdatePage {
 }
 
 $btnApplyUpdate.Add_Click({
+    if (Test-AliRunning) {
+        $choice = Show-Dialog "$APP_NAME is Running" "$APP_NAME is currently running in the background.`nPlease close it before updating." @("Close $APP_NAME", "Cancel")
+        if ($choice -eq "Close $APP_NAME") {
+            Stop-AliProcess
+            Start-Sleep -Milliseconds 800
+            if (Test-AliRunning) {
+                Show-Dialog "Could Not Close $APP_NAME" "$APP_NAME is still running. Please close it manually and try again." @("OK")
+                return
+            }
+        } else { return }
+    }
     $chain = $script:patchChain
     $dir   = $script:existingInstallDir
     $final = $chain[$chain.Count - 1]
@@ -2031,6 +2065,31 @@ $pageNames = @("Welcome", "License Agreement", "Requirements", "Install Location
 $script:idx = 0
 $script:skipCloseConfirm = $false
 # --- Install helpers ------
+
+function Test-AliRunning {
+    try {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        $ar  = $tcp.BeginConnect("127.0.0.1", 7891, $null, $null)
+        $ok  = $ar.AsyncWaitHandle.WaitOne(300, $false)
+        $tcp.Close()
+        return $ok
+    } catch { return $false }
+}
+
+function Stop-AliProcess {
+    $conn = Get-NetTCPConnection -LocalPort 7891 -State Listen -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    if (-not $conn) { return }
+    $pid1 = $conn.OwningProcess
+    $proc = Get-Process -Id $pid1 -ErrorAction SilentlyContinue
+    if ($proc) {
+        $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$pid1" -ErrorAction SilentlyContinue).ParentProcessId
+        Stop-Process -Id $pid1 -Force -ErrorAction SilentlyContinue
+        if ($parent -and $parent -ne 0) {
+            Stop-Process -Id $parent -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
 function Clear-InstallAttributes {
     param([string]$Path)
     Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue |
@@ -2141,6 +2200,19 @@ public class ShellNotify {
                }
            }},
 
+        @{ Pct = 20; Msg = "Saving installer...";
+           Action = {
+               if ($script:_selfPath -and (Test-Path $script:_selfPath)) {
+                   Write-Log "Installer: copying from file $script:_selfPath"
+                   Copy-Item $script:_selfPath "$lib\install.ps1" -Force
+               } elseif ($script:_selfScript) {
+                   Write-Log "Installer: writing from memory (iex mode)"
+                   Set-Content "$lib\install.ps1" $script:_selfScript -Encoding UTF8
+               } else {
+                   Write-Log "Installer: skipped (source unavailable)" "WARN"
+               }
+           }},
+
         @{ Pct = 42; Msg = "Writing files...";
            Action = {
                foreach ($entry in $FILE_MANIFEST.GetEnumerator()) {
@@ -2165,10 +2237,11 @@ public class ShellNotify {
            Action = {
                $wsh = New-Object -ComObject WScript.Shell
 
-               # Main launcher: $dir\APP.lnk - targets APP.cmd directly so Open File Location shows data/
+               # Main launcher: routes through startup.vbs so cmd runs hidden with the custom icon
                $lnk = $wsh.CreateShortcut("$dir\$APP_NAME.lnk")
-               $lnk.TargetPath       = "$data\$APP_NAME.cmd"
-               $lnk.WorkingDirectory = $data
+               $lnk.TargetPath       = "wscript.exe"
+               $lnk.Arguments        = "`"$lib\startup.vbs`""
+               $lnk.WorkingDirectory = $lib
                $lnk.IconLocation     = "$assets\$APP_NAME_LOW.ico,0"
                $lnk.Description      = "Launch $APP_NAME"
                $lnk.Save()
@@ -2245,8 +2318,9 @@ public class ShellNotify {
                    Write-Log "Startup: creating $startupLnk"
                    $wsh = New-Object -ComObject WScript.Shell
                    $lnk = $wsh.CreateShortcut($startupLnk)
-                   $lnk.TargetPath       = "$data\$APP_NAME.cmd"
-                   $lnk.WorkingDirectory = $data
+                   $lnk.TargetPath       = "wscript.exe"
+                   $lnk.Arguments        = "`"$lib\startup.vbs`""
+                   $lnk.WorkingDirectory = $lib
                    $lnk.IconLocation     = "$assets\$APP_NAME_LOW.ico,0"
                    $lnk.Description      = "Start $APP_NAME on login"
                    $lnk.Save()
@@ -2323,8 +2397,9 @@ public class ShellNotify {
                    Write-Log "Start Menu: creating $startMenuLnk"
                    $wsh = New-Object -ComObject WScript.Shell
                    $lnk = $wsh.CreateShortcut($startMenuLnk)
-                   $lnk.TargetPath       = "$data\$APP_NAME.cmd"
-                   $lnk.WorkingDirectory = $data
+                   $lnk.TargetPath       = "wscript.exe"
+                   $lnk.Arguments        = "`"$lib\startup.vbs`""
+                   $lnk.WorkingDirectory = $lib
                    $lnk.IconLocation     = "$assets\$APP_NAME_LOW.ico,0"
                    $lnk.Save()
                } else {
@@ -2380,8 +2455,9 @@ public class ShellNotify {
                    Write-Log "Desktop shortcut: creating"
                    $shell = New-Object -ComObject WScript.Shell
                    $sc    = $shell.CreateShortcut("$env:USERPROFILE\Desktop\$APP_NAME.lnk")
-                   $sc.TargetPath       = "$data\$APP_NAME.cmd"
-                   $sc.WorkingDirectory = $data
+                   $sc.TargetPath       = "wscript.exe"
+                   $sc.Arguments        = "`"$lib\startup.vbs`""
+                   $sc.WorkingDirectory = $lib
                    $sc.IconLocation     = "$assets\$APP_NAME_LOW.ico,0"
                    $sc.Save()
                } else {
@@ -2471,6 +2547,18 @@ function Show-Page([int]$n) {
             }
         }
         5 {
+            if (Test-AliRunning) {
+                $choice = Show-Dialog "$APP_NAME is Running" "$APP_NAME is currently running in the background.`nPlease close it before installing." @("Close $APP_NAME", "Cancel")
+                if ($choice -eq "Close $APP_NAME") {
+                    Stop-AliProcess
+                    Start-Sleep -Milliseconds 800
+                    if (Test-AliRunning) {
+                        Show-Dialog "Could Not Close $APP_NAME" "$APP_NAME is still running. Please close it manually and try again." @("OK")
+                    }
+                }
+                Show-Page 4
+                return
+            }
             $btnBack.Enabled   = $false
             $btnNext.Enabled   = $false
             $btnCancel.Enabled = $false
