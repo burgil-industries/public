@@ -2087,6 +2087,18 @@ function Start-Installation {
 
     if (Test-Path $dir) { Clear-InstallAttributes $dir }
 
+    # Pre-compile the shell-notify type so Add-Type doesn't stall mid-install
+    if (-not ([System.Management.Automation.PSTypeName]'ShellNotify').Type) {
+        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class ShellNotify {
+    [DllImport("shell32.dll")]
+    public static extern void SHChangeNotify(int wEventId, int uFlags, IntPtr dwItem1, IntPtr dwItem2);
+}
+"@
+    }
+
     $steps = @(
         @{ Pct =  7; Msg = "Creating directories...";
            Action = {
@@ -2199,15 +2211,10 @@ function Start-Installation {
                New-ItemProperty -Path $key -Name "NoRepair" -Value 1 -PropertyType DWord -Force | Out-Null
            }},
 
-        @{ Pct = 96; Msg = "Applying optional features...";
+        @{ Pct = 88; Msg = "Applying optional features (1/7): Run on startup...";
            Action = {
-               Write-Log ("Applying features: startup={0} path={1} context-menu={2} send-to={3} start-menu={4} file-assoc={5} new-menu={6}" -f
-                   $chkStartup.Checked, $chkAddPath.Checked, $chkOpenWith.Checked,
-                   $chkSendTo.Checked, $chkStartMenu.Checked, $chkFileAssoc.Checked, $chkNewMenu.Checked)
-
-               # Run on Startup - Startup folder .lnk so Task Manager shows the app name + icon
                $startupLnk = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\$APP_NAME.lnk"
-               Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $APP_NAME -ErrorAction SilentlyContinue  # remove legacy Run key
+               Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $APP_NAME -ErrorAction SilentlyContinue
                if ($chkStartup.Checked) {
                    Write-Log "Startup: creating $startupLnk"
                    $wsh = New-Object -ComObject WScript.Shell
@@ -2221,8 +2228,10 @@ function Start-Installation {
                    Write-Log "Startup: removing"
                    Remove-Item $startupLnk -Force -ErrorAction SilentlyContinue
                }
+           }},
 
-               # Add to Path
+        @{ Pct = 89; Msg = "Applying optional features (2/7): Add to PATH...";
+           Action = {
                $curPath = [Environment]::GetEnvironmentVariable("Path", "User")
                if ($chkAddPath.Checked) {
                    if ($curPath -notlike "*$data*") {
@@ -2236,8 +2245,10 @@ function Start-Installation {
                    $newPath = ($curPath -split ";" | Where-Object { $_ -ne $data }) -join ";"
                    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
                }
+           }},
 
-               # Right-click menu
+        @{ Pct = 91; Msg = "Applying optional features (3/7): Right-click menu...";
+           Action = {
                $ico    = "$assets\$APP_NAME_LOW.ico"
                $cmd    = "wscript.exe `"$lib\router.vbs`" `"$($APP_NAME_LOW)://open?path=%1`""
                $cmdDir = "wscript.exe `"$lib\router.vbs`" `"$($APP_NAME_LOW)://open?path=%V`""
@@ -2255,12 +2266,14 @@ function Start-Installation {
                    }
                } else {
                    Write-Log "Right-click menu: removing"
-                   Remove-Item -LiteralPath "HKCU:\SOFTWARE\Classes\*\shell\$APP_NAME"                   -Recurse -Force -ErrorAction SilentlyContinue
-                   Remove-Item -Path        "HKCU:\SOFTWARE\Classes\Directory\shell\$APP_NAME"           -Recurse -Force -ErrorAction SilentlyContinue
+                   Remove-Item -LiteralPath "HKCU:\SOFTWARE\Classes\*\shell\$APP_NAME"                    -Recurse -Force -ErrorAction SilentlyContinue
+                   Remove-Item -Path        "HKCU:\SOFTWARE\Classes\Directory\shell\$APP_NAME"            -Recurse -Force -ErrorAction SilentlyContinue
                    Remove-Item -Path        "HKCU:\SOFTWARE\Classes\Directory\Background\shell\$APP_NAME" -Recurse -Force -ErrorAction SilentlyContinue
                }
+           }},
 
-               # Send To
+        @{ Pct = 92; Msg = "Applying optional features (4/7): Send To...";
+           Action = {
                $sendToLnk = "$env:APPDATA\Microsoft\Windows\SendTo\$APP_NAME.lnk"
                if ($chkSendTo.Checked) {
                    Write-Log "Send To: creating $sendToLnk"
@@ -2275,8 +2288,10 @@ function Start-Installation {
                    Write-Log "Send To: removing"
                    Remove-Item $sendToLnk -Force -ErrorAction SilentlyContinue
                }
+           }},
 
-               # Start Menu
+        @{ Pct = 93; Msg = "Applying optional features (5/7): Start Menu...";
+           Action = {
                $startMenuLnk = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\$APP_NAME.lnk"
                if ($chkStartMenu.Checked) {
                    Write-Log "Start Menu: creating $startMenuLnk"
@@ -2290,8 +2305,10 @@ function Start-Installation {
                    Write-Log "Start Menu: removing"
                    Remove-Item $startMenuLnk -Force -ErrorAction SilentlyContinue
                }
+           }},
 
-               # File type association (.ali)
+        @{ Pct = 94; Msg = "Applying optional features (6/7): File association...";
+           Action = {
                if ($chkFileAssoc.Checked) {
                    Write-Log "File assoc: registering .$APP_NAME_LOW"
                    $hkcu = [Microsoft.Win32.Registry]::CurrentUser
@@ -2308,8 +2325,10 @@ function Start-Installation {
                    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$APP_NAME_LOW" -Recurse -Force -ErrorAction SilentlyContinue
                    Remove-Item -Path "HKCU:\SOFTWARE\Classes\$APP_NAME.File" -Recurse -Force -ErrorAction SilentlyContinue
                }
+           }},
 
-               # New menu (.ali)
+        @{ Pct = 95; Msg = "Applying optional features (7/7): New menu...";
+           Action = {
                if ($chkNewMenu.Checked) {
                    Write-Log "New menu: registering .$APP_NAME_LOW ShellNew"
                    $hkcu = [Microsoft.Win32.Registry]::CurrentUser
@@ -2321,18 +2340,10 @@ function Start-Installation {
                    Write-Log "New menu: removing .$APP_NAME_LOW ShellNew"
                    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$APP_NAME_LOW\ShellNew" -Recurse -Force -ErrorAction SilentlyContinue
                }
+           }},
 
-               # Flush Windows shell/icon cache
-               if (-not ([System.Management.Automation.PSTypeName]'ShellNotify').Type) {
-                   Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class ShellNotify {
-    [DllImport("shell32.dll")]
-    public static extern void SHChangeNotify(int wEventId, int uFlags, IntPtr dwItem1, IntPtr dwItem2);
-}
-"@
-               }
+        @{ Pct = 96; Msg = "Refreshing shell...";
+           Action = {
                [ShellNotify]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
                Write-Log "Shell cache flushed (SHChangeNotify)"
            }},
