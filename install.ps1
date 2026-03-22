@@ -1462,42 +1462,62 @@ $pgConfirm = New-Page
 $pgConfirm.Controls.Add((New-Label "Ready to Install" 30 18 480 26 13 Bold $C_TEXT))
 $pgConfirm.Controls.Add((New-Label "Review your choices, then click Install:" 30 48 480 20 10 Regular $C_DIM))
 
-$lblConfAppL   = New-Label "Application :"  30  86 134 22 10 Bold    $C_DIM
-$lblConfAppV   = New-Label "$APP_NAME $APP_VERSION" 172  86 326 22 10 Regular $C_TEXT
-$lblConfDirL   = New-Label "Location :"     30 112 134 22 10 Bold    $C_DIM
-$lblConfDirV   = New-Label ""              172 112 326 22 10 Regular $C_TEXT
-$lblConfScL    = New-Label "Shortcut :"     30 138 134 22 10 Bold    $C_DIM
-$lblConfScV    = New-Label ""              172 138 326 22 10 Regular $C_TEXT
-$lblConfProtoL = New-Label "Protocol :"     30 164 134 22 10 Bold    $C_DIM
-$lblConfProtoV = New-Label "$($APP_NAME_LOW)://"        172 164 326 22 10 Regular $C_ACCENT
-$lblConfUninL  = New-Label "Uninstaller :"  30 190 134 22 10 Bold    $C_DIM
-$lblConfUninV  = New-Label "Yes (Add/Remove Programs)" 172 190 326 22 10 Regular $C_SUCCESS
+# Summary rows: font=9, height=18, 22px row spacing (frees vertical space for the toggle)
+$lblConfAppL   = New-Label "Application :"  30  84 134 18 9 Bold    $C_DIM
+$lblConfAppV   = New-Label "$APP_NAME $APP_VERSION" 172  84 326 18 9 Regular $C_TEXT
+$lblConfDirL   = New-Label "Location :"     30 106 134 18 9 Bold    $C_DIM
+$lblConfDirV   = New-Label ""              172 106 326 18 9 Regular $C_TEXT
+$lblConfScL    = New-Label "Shortcut :"     30 128 134 18 9 Bold    $C_DIM
+$lblConfScV    = New-Label ""              172 128 326 18 9 Regular $C_TEXT
+$lblConfProtoL = New-Label "Protocol :"     30 150 134 18 9 Bold    $C_DIM
+$lblConfProtoV = New-Label "$($APP_NAME_LOW)://"        172 150 326 18 9 Regular $C_ACCENT
+$lblConfUninL  = New-Label "Uninstaller :"  30 172 134 18 9 Bold    $C_DIM
+$lblConfUninV  = New-Label "Yes (Add/Remove Programs)" 172 172 326 18 9 Regular $C_SUCCESS
 
 $confirmSep           = New-Object System.Windows.Forms.Panel
-$confirmSep.Location  = New-Object System.Drawing.Point(30, 218)
+$confirmSep.Location  = New-Object System.Drawing.Point(30, 198)
 $confirmSep.Size      = New-Object System.Drawing.Size(480, 1)
 $confirmSep.BackColor = $C_BORDER
 
-# Optional features - 2-column grid (col1 x=30, col2 x=285)
+# "Advanced settings" collapsible toggle - DarkButton for proper hover/press feedback
+$btnAdvToggle             = New-ActionButton "[+]  Advanced settings" 30 208 480 28
+$btnAdvToggle.Font        = New-Object System.Drawing.Font("Segoe UI", 10)
+$btnAdvToggle.ForeColor   = $C_TEXT
+$btnAdvToggle.NormalColor = $C_INPUT
+$btnAdvToggle.HoverColor  = $C_BORDER
+$btnAdvToggle.PressColor  = $C_CARD
+$btnAdvToggle.BorderColor = $C_BORDER
+$btnAdvToggle.Corner      = 4
+
+# Collapsible panel - hidden by default (2-column grid, rows at 22px spacing)
+$pnlAdvanced           = New-Object System.Windows.Forms.Panel
+$pnlAdvanced.Location  = New-Object System.Drawing.Point(30, 240)
+$pnlAdvanced.Size      = New-Object System.Drawing.Size(480, 90)
+$pnlAdvanced.BackColor = $C_BG
+$pnlAdvanced.Visible   = $false
+
 function New-OptChk([string]$text, [int]$x, [int]$y) {
     $c           = New-Object System.Windows.Forms.CheckBox
     $c.Text      = $text
     $c.Checked   = $true
     $c.Location  = New-Object System.Drawing.Point($x, $y)
-    $c.Size      = New-Object System.Drawing.Size(240, 20)
+    $c.Size      = New-Object System.Drawing.Size(235, 20)
     $c.Font      = New-Object System.Drawing.Font("Segoe UI", 9)
     $c.ForeColor = $C_TEXT
     $c.BackColor = $C_BG
     return $c
 }
 
-$chkStartup   = New-OptChk "Run on Startup"          30  226
-$chkSendTo    = New-OptChk "Add to Send To menu"     285 226
-$chkAddPath   = New-OptChk "Add to Path"              30  250
-$chkStartMenu = New-OptChk "Start Menu shortcut"     285 250
-$chkOpenWith  = New-OptChk "Right-click menu"         30  274
-$chkFileAssoc = New-OptChk "File type (.ali)"        285 274
-$chkNewMenu   = New-OptChk "New menu (.ali)"         285 298
+# col1 x=0, col2 x=240; rows at y=2,24,46,68
+$chkStartup   = New-OptChk "Run on Startup"          0   2
+$chkSendTo    = New-OptChk "Add to Send To menu"     240  2
+$chkAddPath   = New-OptChk "Add to Path"             0   24
+$chkStartMenu = New-OptChk "Start Menu shortcut"     240 24
+$chkOpenWith  = New-OptChk "Right-click menu"        0   46
+$chkFileAssoc = New-OptChk "File type (.ali)"        240 46
+$chkNewMenu   = New-OptChk "New menu (.ali)"         240 68
+
+$pnlAdvanced.Controls.AddRange(@($chkStartup, $chkSendTo, $chkAddPath, $chkStartMenu, $chkOpenWith, $chkFileAssoc, $chkNewMenu))
 
 # New menu requires file type - disable it when file type is unchecked
 $chkFileAssoc.Add_CheckedChanged({
@@ -1508,6 +1528,12 @@ $chkFileAssoc.Add_CheckedChanged({
         $chkNewMenu.Enabled  = $true
         $chkNewMenu.Checked  = $true
     }
+})
+
+# Toggle expand/collapse on click
+$btnAdvToggle.Add_Click({
+    $pnlAdvanced.Visible = -not $pnlAdvanced.Visible
+    $btnAdvToggle.Text   = if ($pnlAdvanced.Visible) { "[-]  Advanced settings" } else { "[+]  Advanced settings" }
 })
 
 # Tooltips for all optional feature checkboxes
@@ -1525,7 +1551,7 @@ $pgConfirm.Controls.AddRange(@(
     $lblConfScL,  $lblConfScV,  $lblConfProtoL, $lblConfProtoV,
     $lblConfUninL, $lblConfUninV,
     $confirmSep,
-    $chkStartup, $chkSendTo, $chkAddPath, $chkStartMenu, $chkOpenWith, $chkFileAssoc, $chkNewMenu
+    $btnAdvToggle, $pnlAdvanced
 ))
 # =============================================================================
 # PAGE 5 - INSTALLING
