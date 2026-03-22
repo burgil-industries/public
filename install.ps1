@@ -910,13 +910,108 @@ function send(socket, obj) {
     try { socket.write(makeFrame(JSON.stringify(obj))); } catch (_) {}
 }
 
-// ── Plugin registry ────────────────────────────────────────────────────────────
+// ── Plugin system ─────────────────────────────────────────────────────────────
 
 const pluginsFile = path.join(__dirname, '..', 'plugins.json');
+const pluginsDir  = path.join(__dirname, '..', 'plugins');
+const dataDir     = path.join(__dirname, '..');
 
-function loadPlugins() {
+// All active WS sockets
+const sockets     = new Set();
+// Plugin-registered WS message handlers: type -> handler(socket, msg)
+const wsHandlers  = new Map();
+// Loaded plugin manifests: id -> { id, name, version, ... }
+const loadedPlugins = {};
+
+function broadcast(obj) {
+    for (const s of sockets) send(s, obj);
+}
+
+function readPluginsJson() {
     try { return JSON.parse(fs.readFileSync(pluginsFile, 'utf8')); }
     catch (_) { return {}; }
+}
+
+// Plugin context - passed to each plugin's install(ctx) function
+function createContext() {
+    const services = new Map();
+
+    return {
+        // Identity
+        appName:    APP_NAME,
+        appVersion: APP_VERSION,
+        dataDir,
+
+        // Service provider/consumer
+        provide(key, val) {
+            services.set(key, val);
+        },
+        use(key) {
+            if (!services.has(key)) {
+                throw new Error(
+                    `[plugin] Service "${key}" not found. ` +
+                    `Is the providing plugin listed as a dependency and loaded first?`
+                );
+            }
+            return services.get(key);
+        },
+
+        // WS integration
+        onMessage(type, handler) { wsHandlers.set(type, handler); },
+        reply:     send,
+        broadcast,
+
+        // Introspection
+        loadedPlugins() { return Object.assign({}, loadedPlugins); },
+    };
+}
+
+function loadPlugins() {
+    if (!fs.existsSync(pluginsDir)) {
+        console.log(`[plugin] no plugins directory at ${pluginsDir}`);
+        return;
+    }
+
+    const entries = fs.readdirSync(pluginsDir);
+
+    // Dependency sort: core first, then ui, then everything else
+    entries.sort((a, b) => {
+        if (a === 'core') return -1;
+        if (b === 'core') return 1;
+        if (a === 'ui')   return -1;
+        if (b === 'ui')   return 1;
+        return a.localeCompare(b);
+    });
+
+    const ctx = createContext();
+
+    for (const name of entries) {
+        const dir          = path.join(pluginsDir, name);
+        const manifestPath = path.join(dir, 'plugin.json');
+
+        if (!fs.existsSync(manifestPath)) continue;
+
+        let manifest;
+        try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); }
+        catch (e) {
+            console.error(`[plugin] bad manifest for ${name}: ${e.message}`);
+            continue;
+        }
+
+        try {
+            const plugin = require(path.join(dir, manifest.main || 'index.js'));
+            if (typeof plugin.install === 'function') plugin.install(ctx);
+            loadedPlugins[manifest.id || name] = {
+                name:    manifest.name    || name,
+                version: manifest.version || '0.0.0',
+            };
+        } catch (e) {
+            console.error(`[plugin] failed to load "${name}": ${e.message}`);
+        }
+    }
+
+    const count = Object.keys(loadedPlugins).length;
+    console.log(`[plugin] ${count} plugin(s) loaded: ${Object.keys(loadedPlugins).join(', ') || 'none'}`);
 }
 
 // ── Message handler ───────────────────────────────────────────────────────────
@@ -931,15 +1026,24 @@ function handleMessage(socket, ip, raw) {
         send(socket, { type: 'error', message: 'invalid json' });
         return;
     }
+
     switch (msg.type) {
         case 'ping':
             send(socket, { type: 'pong', app: APP_NAME, version: APP_VERSION });
             break;
         case 'versions':
-            send(socket, { type: 'versions', app: APP_NAME, version: APP_VERSION, plugins: loadPlugins() });
+            send(socket, {
+                type:    'versions',
+                app:     APP_NAME,
+                version: APP_VERSION,
+                plugins: readPluginsJson(),
+            });
             break;
-        default:
-            send(socket, { type: 'error', message: 'unknown type' });
+        default: {
+            const handler = wsHandlers.get(msg.type);
+            if (handler) handler(socket, msg);
+            else send(socket, { type: 'error', message: `unknown type: ${msg.type}` });
+        }
     }
 }
 
@@ -967,6 +1071,10 @@ server.on('upgrade', (req, socket) => {
         '\r\n'
     );
 
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    socket.on('error', () => sockets.delete(socket));
+
     let buf = Buffer.alloc(0);
     socket.on('data', chunk => {
         buf = Buffer.concat([buf, chunk]);
@@ -976,7 +1084,6 @@ server.on('upgrade', (req, socket) => {
             handleMessage(socket, ip, msg);
         }
     });
-    socket.on('error', () => {});
 });
 
 server.on('error', err => {
@@ -989,6 +1096,7 @@ server.on('error', err => {
 
 server.listen(PORT, '127.0.0.1', () => {
     console.log(`${APP_NAME} ${APP_VERSION} - WS server listening on ws://127.0.0.1:${PORT}`);
+    loadPlugins();
 });
 '@
 
@@ -1099,6 +1207,611 @@ $FILE_MANIFEST = [ordered]@{
     'data/src/app.py' = $FILE_DATA_SRC_APP_PY
     'LICENSE.txt' = $FILE_LICENSE_TXT
 }
+
+# --- Plugin files (auto-embedded from plugins/ by build.ps1) ---
+$FILE_DATA_PLUGINS_CORE_INDEX_JS = @'
+'use strict';
+const EventEmitter = require('events');
+const fs           = require('fs');
+const path         = require('path');
+
+// ── EventBus ──────────────────────────────────────────────────────────────────
+class EventBus extends EventEmitter {}
+
+// ── Config ────────────────────────────────────────────────────────────────────
+class Config {
+    constructor(dataDir) {
+        this._file = path.join(dataDir, 'config.json');
+        this._data = {};
+        this._load();
+    }
+
+    _load() {
+        try { this._data = JSON.parse(fs.readFileSync(this._file, 'utf8')); }
+        catch (_) { this._data = {}; }
+    }
+
+    get(key, def = undefined) {
+        return key in this._data ? this._data[key] : def;
+    }
+
+    set(key, val) {
+        this._data[key] = val;
+        try { fs.writeFileSync(this._file, JSON.stringify(this._data, null, 2)); }
+        catch (e) { console.error(`[core] config write failed: ${e.message}`); }
+    }
+
+    all() { return Object.assign({}, this._data); }
+}
+
+// ── Logger ────────────────────────────────────────────────────────────────────
+function makeLogger(events) {
+    return function log(msg, level = 'INFO') {
+        const line = `[${new Date().toISOString()}] [${level}] ${msg}`;
+        console.log(line);
+        events.emit('core:log', { level, msg, line });
+    };
+}
+
+// ── Plugin install ────────────────────────────────────────────────────────────
+module.exports = {
+    install(ctx) {
+        const bus    = new EventBus();
+        const config = new Config(ctx.dataDir);
+        const log    = makeLogger(bus);
+
+        ctx.provide('events', bus);
+        ctx.provide('config', config);
+        ctx.provide('log',    log);
+
+        log(`core plugin loaded`);
+    }
+};
+'@
+
+$FILE_DATA_PLUGINS_CORE_PLUGIN_JSON = @'
+{
+  "id": "core",
+  "name": "Core",
+  "version": "1.0.0",
+  "description": "Core plugin - event bus, persistent config, logger",
+  "main": "index.js",
+  "dependencies": {}
+}
+'@
+
+$FILE_DATA_PLUGINS_EXAMPLE_TODO_TXT = @'
+Under construction
+'@
+
+$FILE_DATA_PLUGINS_PHONE_TODO_TXT = @'
+Under construction
+'@
+
+$FILE_DATA_PLUGINS_SETTINGS_INDEX_JS = @'
+'use strict';
+const path = require('path');
+
+module.exports = {
+    install(ctx) {
+        const log           = ctx.use('log');
+        const config        = ctx.use('config');
+        const registerPanel = ctx.use('ui.registerPanel');
+
+        // Register the settings panel with the UI plugin
+        registerPanel('settings', path.join(__dirname, 'panel.html'), 'Settings');
+
+        // WS: settings:get_all -> send all config entries + app/plugin info
+        ctx.onMessage('settings:get_all', (socket, _msg) => {
+            ctx.reply(socket, {
+                type:    'settings:state',
+                config:  config.all(),
+                app:     ctx.appName,
+                version: ctx.appVersion,
+                plugins: ctx.loadedPlugins(),
+            });
+        });
+
+        // WS: settings:set { key, value }
+        ctx.onMessage('settings:set', (socket, msg) => {
+            if (typeof msg.key !== 'string' || msg.key.trim() === '') {
+                ctx.reply(socket, { type: 'error', message: 'settings:set requires a key string' });
+                return;
+            }
+            config.set(msg.key, msg.value);
+            log(`settings: config["${msg.key}"] = ${JSON.stringify(msg.value)}`);
+            ctx.broadcast({ type: 'settings:changed', key: msg.key, value: msg.value });
+        });
+
+        log(`settings plugin loaded`);
+    }
+};
+'@
+
+$FILE_DATA_PLUGINS_SETTINGS_PANEL_HTML = @'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #0a0a0f;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 32px 24px;
+  }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 32px;
+    border-bottom: 1px solid #1e293b;
+    padding-bottom: 20px;
+  }
+
+  header h1   { font-size: 1.4rem; font-weight: 600; letter-spacing: -.3px; }
+  header span { font-size: 0.8rem; color: #64748b; font-family: monospace; }
+
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: #64748b;
+    margin-left: auto;
+  }
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #ef4444;
+    transition: background .3s;
+  }
+  .dot.connected { background: #22c55e; }
+
+  section {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+
+  section h2 {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: #475569;
+    margin-bottom: 16px;
+  }
+
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #1e293b;
+    font-size: 0.875rem;
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-row .label  { color: #94a3b8; }
+  .info-row .value  { font-family: monospace; color: #e2e8f0; }
+
+  .plugin-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin: 3px;
+  }
+  .plugin-badge .ver { color: #475569; font-family: monospace; }
+
+  .field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  @media (max-width: 520px) { .field-row { grid-template-columns: 1fr; } }
+
+  label { font-size: 0.8rem; color: #94a3b8; display: block; margin-bottom: 5px; }
+
+  input[type="text"], input[type="number"] {
+    width: 100%;
+    background: #020617;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #e2e8f0;
+    padding: 8px 12px;
+    font-size: 0.875rem;
+    font-family: monospace;
+    outline: none;
+    transition: border-color .15s;
+  }
+  input:focus { border-color: #6366f1; }
+
+  .actions { display: flex; gap: 10px; margin-top: 16px; }
+
+  button {
+    padding: 8px 20px;
+    border-radius: 6px;
+    border: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity .15s;
+  }
+  button:hover { opacity: .85; }
+  button.primary { background: #6366f1; color: #fff; }
+  button.secondary { background: #1e293b; color: #94a3b8; border: 1px solid #334155; }
+
+  .toast {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-size: 0.85rem;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity .2s, transform .2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  #plugins-list { display: flex; flex-wrap: wrap; gap: 4px; }
+  #no-conn { color: #ef4444; font-size: 0.8rem; padding: 8px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="app-title">Settings</h1>
+  <span id="app-version"></span>
+  <div class="status">
+    <div class="dot" id="dot"></div>
+    <span id="conn-label">Connecting…</span>
+  </div>
+</header>
+
+<section>
+  <h2>App Info</h2>
+  <div class="info-row"><span class="label">Name</span>    <span class="value" id="info-name">-</span></div>
+  <div class="info-row"><span class="label">Version</span> <span class="value" id="info-version">-</span></div>
+  <div class="info-row"><span class="label">WS Port</span> <span class="value">53420</span></div>
+  <div class="info-row"><span class="label">UI Port</span> <span class="value">53421</span></div>
+</section>
+
+<section>
+  <h2>Loaded Plugins</h2>
+  <div id="plugins-list"><span id="no-conn">Not connected</span></div>
+</section>
+
+<section>
+  <h2>Config</h2>
+  <div class="field-row">
+    <div>
+      <label for="cfg-key">Key</label>
+      <input type="text" id="cfg-key" placeholder="e.g. ui.port">
+    </div>
+    <div>
+      <label for="cfg-value">Value</label>
+      <input type="text" id="cfg-value" placeholder="value">
+    </div>
+  </div>
+  <div class="actions">
+    <button class="primary"    id="btn-set">Set</button>
+    <button class="secondary"  id="btn-get">Get</button>
+    <button class="secondary"  id="btn-refresh">Refresh</button>
+  </div>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const WS_URL = 'ws://127.0.0.1:53420';
+let ws = null;
+let reconnectTimer = null;
+
+const dot        = document.getElementById('dot');
+const connLabel  = document.getElementById('conn-label');
+const appTitle   = document.getElementById('app-title');
+const appVersion = document.getElementById('app-version');
+const infoName   = document.getElementById('info-name');
+const infoVer    = document.getElementById('info-version');
+const plugsList  = document.getElementById('plugins-list');
+const noConn     = document.getElementById('no-conn');
+const cfgKey     = document.getElementById('cfg-key');
+const cfgValue   = document.getElementById('cfg-value');
+const toast      = document.getElementById('toast');
+
+let toastTimer = null;
+function showToast(msg) {
+    clearTimeout(toastTimer);
+    toast.textContent = msg;
+    toast.classList.add('show');
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 2800);
+}
+
+function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+function setConnected(ok) {
+    dot.className = 'dot' + (ok ? ' connected' : '');
+    connLabel.textContent = ok ? 'Connected' : 'Disconnected';
+    if (!ok) {
+        noConn.style.display = '';
+        plugsList.querySelectorAll('.plugin-badge').forEach(el => el.remove());
+    }
+}
+
+function renderPlugins(plugins) {
+    noConn.style.display = 'none';
+    plugsList.querySelectorAll('.plugin-badge').forEach(el => el.remove());
+    if (!plugins || !Object.keys(plugins).length) {
+        noConn.style.display = '';
+        noConn.textContent = 'No plugins registered';
+        return;
+    }
+    for (const [id, info] of Object.entries(plugins)) {
+        const b = document.createElement('span');
+        b.className = 'plugin-badge';
+        b.innerHTML = `${id} <span class="ver">v${info.version || '?'}</span>`;
+        plugsList.appendChild(b);
+    }
+}
+
+function onMessage(data) {
+    let msg;
+    try { msg = JSON.parse(data); } catch (_) { return; }
+
+    if (msg.type === 'settings:state') {
+        infoName.textContent    = msg.app     || '-';
+        infoVer.textContent     = msg.version || '-';
+        appTitle.textContent    = (msg.app || 'Settings') + ' - Settings';
+        appVersion.textContent  = msg.version ? `v${msg.version}` : '';
+        renderPlugins(msg.plugins);
+
+        const cfg = msg.config || {};
+        if (cfgKey.value && cfgKey.value in cfg) {
+            cfgValue.value = String(cfg[cfgKey.value]);
+        }
+    }
+
+    if (msg.type === 'settings:changed') {
+        showToast(`Saved: ${msg.key} = ${JSON.stringify(msg.value)}`);
+        if (cfgKey.value === msg.key) cfgValue.value = String(msg.value);
+    }
+
+    if (msg.type === 'error') {
+        showToast('Error: ' + msg.message);
+    }
+}
+
+function connect() {
+    ws = new WebSocket(WS_URL);
+
+    ws.addEventListener('open', () => {
+        setConnected(true);
+        send({ type: 'settings:get_all' });
+    });
+
+    ws.addEventListener('message', e => onMessage(e.data));
+
+    ws.addEventListener('close', () => {
+        setConnected(false);
+        reconnectTimer = setTimeout(connect, 3000);
+    });
+
+    ws.addEventListener('error', () => {
+        ws.close();
+    });
+}
+
+document.getElementById('btn-set').addEventListener('click', () => {
+    const k = cfgKey.value.trim();
+    const v = cfgValue.value;
+    if (!k) { showToast('Enter a key first'); return; }
+    // Try to parse value as JSON, fall back to string
+    let val;
+    try { val = JSON.parse(v); } catch (_) { val = v; }
+    send({ type: 'settings:set', key: k, value: val });
+});
+
+document.getElementById('btn-get').addEventListener('click', () => {
+    send({ type: 'settings:get_all' });
+});
+
+document.getElementById('btn-refresh').addEventListener('click', () => {
+    send({ type: 'settings:get_all' });
+    showToast('Refreshed');
+});
+
+connect();
+</script>
+</body>
+</html>
+'@
+
+$FILE_DATA_PLUGINS_SETTINGS_PLUGIN_JSON = @'
+{
+  "id": "settings",
+  "name": "Settings",
+  "version": "1.0.0",
+  "description": "Settings panel - demonstrates the UI plugin; exposes config read/write over WebSocket",
+  "main": "index.js",
+  "dependencies": {
+    "core": "*",
+    "ui": "*"
+  }
+}
+'@
+
+$FILE_DATA_PLUGINS_UI_INDEX_JS = @'
+'use strict';
+const http = require('http');
+const fs   = require('fs');
+const path = require('path');
+const url  = require('url');
+
+// Panels registered by other plugins: id -> { htmlPath, title }
+const panels = new Map();
+
+// Serve a file by extension with correct content-type
+const MIME = {
+    '.html': 'text/html',
+    '.css':  'text/css',
+    '.js':   'application/javascript',
+    '.json': 'application/json',
+    '.png':  'image/png',
+    '.svg':  'image/svg+xml',
+};
+
+function serveFile(res, filePath) {
+    try {
+        const ext  = path.extname(filePath).toLowerCase();
+        const mime = MIME[ext] || 'text/plain';
+        const data = fs.readFileSync(filePath);
+        res.writeHead(200, { 'Content-Type': mime });
+        res.end(data);
+    } catch (_) {
+        res.writeHead(404);
+        res.end('Not found');
+    }
+}
+
+function buildIndex(appName, appVersion) {
+    const rows = [...panels.entries()].map(([id, p]) =>
+        `<li><a href="/${id}">${p.title || id}</a></li>`
+    ).join('');
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>${appName} - Panels</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #e2e8f0;
+         display: flex; flex-direction: column; align-items: center; padding: 48px 24px; margin: 0; }
+  h1   { font-size: 1.5rem; margin-bottom: 8px; }
+  p    { color: #64748b; margin-bottom: 32px; }
+  ul   { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+  a    { display: block; padding: 14px 28px; background: #1e293b; border: 1px solid #334155;
+         border-radius: 8px; color: #e2e8f0; text-decoration: none; font-size: 1rem;
+         transition: background .15s; }
+  a:hover { background: #334155; }
+</style>
+</head>
+<body>
+  <h1>${appName}</h1>
+  <p>v${appVersion}</p>
+  ${rows.length ? `<ul>${rows}</ul>` : '<p>No panels registered yet.</p>'}
+</body>
+</html>`;
+}
+
+module.exports = {
+    install(ctx) {
+        const log     = ctx.use('log');
+        const config  = ctx.use('config');
+        const events  = ctx.use('events');
+        const port    = config.get('ui.port', 53421);
+
+        // Service: register a panel by id with a path to its HTML file
+        ctx.provide('ui.registerPanel', (id, htmlPath, title = id) => {
+            panels.set(id, { htmlPath: path.resolve(htmlPath), title });
+            log(`ui: registered panel "${id}" (${title})`);
+            events.emit('ui:panel:registered', { id, title });
+        });
+
+        // Service: open a panel in the default browser
+        ctx.provide('ui.openPanel', (id = '') => {
+            const { exec } = require('child_process');
+            const target = `http://127.0.0.1:${port}/${id}`;
+            exec(`start "" "${target}"`);
+            log(`ui: opened panel "${id}" -> ${target}`);
+        });
+
+        const server = http.createServer((req, res) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+
+            const parsed  = url.parse(req.url || '/');
+            const panelId = (parsed.pathname || '/').replace(/^\//, '').split('/')[0];
+
+            // Root -> panel index
+            if (!panelId) {
+                res.writeHead(200, { 'Content-Type': 'text/html' });
+                res.end(buildIndex(ctx.appName, ctx.appVersion));
+                return;
+            }
+
+            // Static asset within a panel dir: /<panelId>/file.ext
+            const subPath = (parsed.pathname || '/').replace(/^\/[^/]+/, '');
+            if (subPath && subPath !== '/') {
+                const panel = panels.get(panelId);
+                if (panel) {
+                    const asset = path.join(path.dirname(panel.htmlPath), subPath);
+                    serveFile(res, asset);
+                    return;
+                }
+            }
+
+            // Panel HTML
+            if (panels.has(panelId)) {
+                serveFile(res, panels.get(panelId).htmlPath);
+                return;
+            }
+
+            res.writeHead(404);
+            res.end('Panel not found');
+        });
+
+        server.on('error', err => log(`ui: server error - ${err.message}`, 'ERROR'));
+
+        server.listen(port, '127.0.0.1', () => {
+            log(`ui: panel server -> http://127.0.0.1:${port}`);
+            events.emit('ui:ready', { port });
+        });
+
+        log(`ui plugin loaded`);
+    }
+};
+'@
+
+$FILE_DATA_PLUGINS_UI_PLUGIN_JSON = @'
+{
+  "id": "ui",
+  "name": "UI",
+  "version": "1.0.0",
+  "description": "UI plugin - serves HTML panels via local HTTP; provides panel registration API",
+  "main": "index.js",
+  "dependencies": {
+    "core": "*"
+  }
+}
+'@
+
+$FILE_MANIFEST['data/plugins/core/index.js'] = $FILE_DATA_PLUGINS_CORE_INDEX_JS
+$FILE_MANIFEST['data/plugins/core/plugin.json'] = $FILE_DATA_PLUGINS_CORE_PLUGIN_JSON
+$FILE_MANIFEST['data/plugins/example/todo.txt'] = $FILE_DATA_PLUGINS_EXAMPLE_TODO_TXT
+$FILE_MANIFEST['data/plugins/phone/todo.txt'] = $FILE_DATA_PLUGINS_PHONE_TODO_TXT
+$FILE_MANIFEST['data/plugins/settings/index.js'] = $FILE_DATA_PLUGINS_SETTINGS_INDEX_JS
+$FILE_MANIFEST['data/plugins/settings/panel.html'] = $FILE_DATA_PLUGINS_SETTINGS_PANEL_HTML
+$FILE_MANIFEST['data/plugins/settings/plugin.json'] = $FILE_DATA_PLUGINS_SETTINGS_PLUGIN_JSON
+$FILE_MANIFEST['data/plugins/ui/index.js'] = $FILE_DATA_PLUGINS_UI_INDEX_JS
+$FILE_MANIFEST['data/plugins/ui/plugin.json'] = $FILE_DATA_PLUGINS_UI_PLUGIN_JSON
 
 # --- Encoding-safe file writer ----------------------
 function Write-File {
