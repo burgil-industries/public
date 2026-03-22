@@ -319,17 +319,114 @@ $APP_VERSION = '__APP_VERSION__'
 $UPDATE_URL  = '__UPDATE_URL__'
 
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class UpdDark {
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int val, int size);
+    public static void Enable(IntPtr hwnd) {
+        int v = 1;
+        DwmSetWindowAttribute(hwnd, 20, ref v, 4);
+        DwmSetWindowAttribute(hwnd, 19, ref v, 4);
+    }
+}
+"@
+
+$C_BG     = [System.Drawing.Color]::FromArgb(13,  17,  23)
+$C_CARD   = [System.Drawing.Color]::FromArgb(22,  27,  34)
+$C_TEXT   = [System.Drawing.Color]::FromArgb(240, 246, 252)
+$C_DIM    = [System.Drawing.Color]::FromArgb(139, 148, 158)
+$C_ACCENT = [System.Drawing.Color]::FromArgb(121, 192, 255)
+$C_BORDER = [System.Drawing.Color]::FromArgb(48,  54,  61)
+
+function New-UpdBtn {
+    param([string]$T, [int]$X, [int]$W,
+          [System.Drawing.Color]$Bg, [System.Drawing.Color]$Fg,
+          [System.Drawing.Color]$Border)
+    $b = New-Object System.Windows.Forms.Button
+    $b.Text      = $T
+    $b.Location  = New-Object System.Drawing.Point($X, 108)
+    $b.Size      = New-Object System.Drawing.Size($W, 32)
+    $b.FlatStyle = "Flat"
+    $b.FlatAppearance.BorderColor            = $Border
+    $b.FlatAppearance.BorderSize             = 1
+    $b.FlatAppearance.MouseOverBackColor     = [System.Drawing.Color]::FromArgb(38, 44, 52)
+    $b.FlatAppearance.MouseDownBackColor     = [System.Drawing.Color]::FromArgb(24, 28, 34)
+    $b.BackColor = $Bg
+    $b.ForeColor = $Fg
+    $b.Font      = New-Object System.Drawing.Font("Segoe UI", 9.5)
+    $b.Cursor    = [System.Windows.Forms.Cursors]::Hand
+    $b.TabStop   = $false
+    return $b
+}
+
 try {
-    $wc   = New-Object System.Net.WebClient
-    $json = $wc.DownloadString("$UPDATE_URL/latest.json") | ConvertFrom-Json
+    $wc      = New-Object System.Net.WebClient
+    $json    = $wc.DownloadString("$UPDATE_URL/latest.json") | ConvertFrom-Json
     $latest    = [System.Version]$json.version
     $installed = [System.Version]$APP_VERSION
+
     if ($latest -gt $installed) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "$APP_NAME v$latest is available.`nYou have v$installed.`n`nDownload the update from the $APP_NAME website.",
-            "Update Available",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        $frm = New-Object System.Windows.Forms.Form
+        $frm.Text            = "$APP_NAME — Update Available"
+        $frm.ClientSize      = New-Object System.Drawing.Size(400, 152)
+        $frm.StartPosition   = "CenterScreen"
+        $frm.FormBorderStyle = "FixedDialog"
+        $frm.MaximizeBox     = $false
+        $frm.MinimizeBox     = $false
+        $frm.BackColor       = $C_BG
+        $frm.Add_Load({ [UpdDark]::Enable($frm.Handle) })
+
+        $icoLbl           = New-Object System.Windows.Forms.Label
+        $icoLbl.Text      = [char]0x2191   # up arrow
+        $icoLbl.Font      = New-Object System.Drawing.Font("Segoe UI", 20, [System.Drawing.FontStyle]::Bold)
+        $icoLbl.ForeColor = $C_ACCENT
+        $icoLbl.BackColor = [System.Drawing.Color]::FromArgb(15, 30, 50)
+        $icoLbl.Size      = New-Object System.Drawing.Size(48, 48)
+        $icoLbl.Location  = New-Object System.Drawing.Point(20, 20)
+        $icoLbl.TextAlign = "MiddleCenter"
+
+        $lbl1           = New-Object System.Windows.Forms.Label
+        $lbl1.Text      = "$APP_NAME v$latest is available"
+        $lbl1.Font      = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
+        $lbl1.ForeColor = $C_TEXT
+        $lbl1.BackColor = [System.Drawing.Color]::Transparent
+        $lbl1.Location  = New-Object System.Drawing.Point(82, 22)
+        $lbl1.Size      = New-Object System.Drawing.Size(300, 26)
+
+        $lbl2           = New-Object System.Windows.Forms.Label
+        $lbl2.Text      = "You have v$installed. How would you like to update?"
+        $lbl2.Font      = New-Object System.Drawing.Font("Segoe UI", 9)
+        $lbl2.ForeColor = $C_DIM
+        $lbl2.BackColor = [System.Drawing.Color]::Transparent
+        $lbl2.Location  = New-Object System.Drawing.Point(82, 54)
+        $lbl2.Size      = New-Object System.Drawing.Size(300, 18)
+
+        $btnInstall = New-UpdBtn "Run Installer" 20  155 `
+            ([System.Drawing.Color]::FromArgb(17, 36, 64)) $C_ACCENT `
+            ([System.Drawing.Color]::FromArgb(56, 112, 200))
+        $btnWeb     = New-UpdBtn "Open Website"  183 130 $C_CARD $C_TEXT $C_BORDER
+        $btnCancel  = New-UpdBtn "Cancel"        321  59 $C_BG   $C_DIM  $C_BG
+
+        $siteBase = $UPDATE_URL -replace '/updates.*$', ''
+        $ps1Path  = Join-Path $PSScriptRoot "install.ps1"
+
+        $btnInstall.Add_Click({
+            $frm.Close()
+            if (Test-Path $ps1Path) {
+                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$ps1Path`""
+            }
+        })
+        $btnWeb.Add_Click({
+            $frm.Close()
+            Start-Process $siteBase
+        })
+        $btnCancel.Add_Click({ $frm.Close() })
+
+        $frm.Controls.AddRange(@($icoLbl, $lbl1, $lbl2, $btnInstall, $btnWeb, $btnCancel))
+        $frm.ShowDialog() | Out-Null
     } else {
         [System.Windows.Forms.MessageBox]::Show(
             "$APP_NAME is up to date (v$APP_VERSION).",
@@ -351,6 +448,14 @@ Dim sh, scriptDir
 scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
 Set sh = CreateObject("WScript.Shell")
 sh.Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & scriptDir & "check-update.ps1""", 0, False
+'@
+
+$FILE_DATA_LIB_REPAIR_VBS = @'
+Set sh = CreateObject("WScript.Shell")
+scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
+ps1 = scriptDir & "install.ps1"
+cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & ps1 & """"
+sh.Run cmd, 1, False
 '@
 
 $FILE_DATA_LIB_ROUTER_PS1 = @'
@@ -655,6 +760,10 @@ $btnYes.Add_Click({
     if ($newPath -ne $curPath) { [Environment]::SetEnvironmentVariable("Path", $newPath, "User") }
     $sc = "$env:USERPROFILE\Desktop\$AppName.lnk"
     if (Test-Path $sc) { Remove-Item $sc -Force -ErrorAction SilentlyContinue }
+    foreach ($lnkName in @("Repair.lnk", "Uninstall.lnk", "Check for Updates.lnk")) {
+        $lnkPath = Join-Path $InstallDir $lnkName
+        if (Test-Path $lnkPath) { Remove-Item $lnkPath -Force -ErrorAction SilentlyContinue }
+    }
     $pb.Value = 45
     [System.Windows.Forms.Application]::DoEvents()
 
@@ -978,6 +1087,7 @@ $FILE_MANIFEST = [ordered]@{
     'data/__APP_NAME__.cmd' = $FILE_DATA___APP_NAME___CMD
     'data/lib/check-update.ps1' = $FILE_DATA_LIB_CHECK_UPDATE_PS1
     'data/lib/check-update.vbs' = $FILE_DATA_LIB_CHECK_UPDATE_VBS
+    'data/lib/repair.vbs' = $FILE_DATA_LIB_REPAIR_VBS
     'data/lib/router.ps1' = $FILE_DATA_LIB_ROUTER_PS1
     'data/lib/router.vbs' = $FILE_DATA_LIB_ROUTER_VBS
     'data/lib/sendto.vbs' = $FILE_DATA_LIB_SENDTO_VBS
@@ -1586,7 +1696,7 @@ $pnlAliRunning.BackColor = [System.Drawing.Color]::FromArgb(60, 40, 0)
 $pnlAliRunning.Visible   = $false
 
 $lblAliRunningTxt           = New-Object System.Windows.Forms.Label
-$lblAliRunningTxt.Text      = "⚠  $APP_NAME is currently running — click Install to close it automatically"
+$lblAliRunningTxt.Text      = "[!]  $APP_NAME is currently running - click Install to close it automatically"
 $lblAliRunningTxt.Location  = New-Object System.Drawing.Point(8, 4)
 $lblAliRunningTxt.Size      = New-Object System.Drawing.Size(464, 18)
 $lblAliRunningTxt.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
@@ -1896,6 +2006,10 @@ $btnUninstReinst.Add_Click({
     Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\$APP_NAME.lnk"         -Force -ErrorAction SilentlyContinue
     $sc = "$env:USERPROFILE\Desktop\$APP_NAME.lnk"
     if (Test-Path $sc) { Remove-Item $sc -Force -ErrorAction SilentlyContinue }
+    foreach ($lnkName in @("Repair.lnk", "Uninstall.lnk", "Check for Updates.lnk")) {
+        $lnkPath = Join-Path $dir $lnkName
+        if (Test-Path $lnkPath) { Remove-Item $lnkPath -Force -ErrorAction SilentlyContinue }
+    }
     $curPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $newPath = ($curPath -split ";" | Where-Object { $_ -ne "$dir\data" -and $_ -ne $dir }) -join ";"
     if ($newPath -ne $curPath) { [Environment]::SetEnvironmentVariable("Path", $newPath, "User") }
@@ -1977,7 +2091,7 @@ $pnlReinstAliRunning.BackColor = [System.Drawing.Color]::FromArgb(60, 40, 0)
 $pnlReinstAliRunning.Visible   = $false
 
 $lblReinstAliRunningTxt           = New-Object System.Windows.Forms.Label
-$lblReinstAliRunningTxt.Text      = "⚠  $APP_NAME is currently running — close it before continuing"
+$lblReinstAliRunningTxt.Text      = "[!]  $APP_NAME is currently running - close it before continuing"
 $lblReinstAliRunningTxt.Location  = New-Object System.Drawing.Point(8, 4)
 $lblReinstAliRunningTxt.Size      = New-Object System.Drawing.Size(374, 18)
 $lblReinstAliRunningTxt.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
@@ -2210,19 +2324,15 @@ $script:skipCloseConfirm = $false
 # --- Install helpers ------
 
 function Test-AliRunning {
-    try {
-        $tcp = New-Object System.Net.Sockets.TcpClient
-        $ar  = $tcp.BeginConnect("127.0.0.1", 53420, $null, $null)
-        $ok  = $ar.AsyncWaitHandle.WaitOne(300, $false)
-        $tcp.Close()
-        return $ok
-    } catch { return $false }
+    # GetNetTCPConnection is reliable - it reads kernel state directly
+    $conns = Get-NetTCPConnection -LocalPort 53420 -ErrorAction SilentlyContinue
+    return ($null -ne $conns -and @($conns).Count -gt 0)
 }
 
 $script:_safeProcNames = @('explorer','svchost','services','lsass','winlogon','csrss','smss','wininit','System','wscript','powershell','pwsh')
 
 function Stop-AliProcess {
-    # Collect all unique PIDs that own any TCP connection on port 53420 (any state)
+    # Collect all unique PIDs that own any TCP connection on port 53420
     $pids = @(Get-NetTCPConnection -LocalPort 53420 -ErrorAction SilentlyContinue |
               Select-Object -ExpandProperty OwningProcess -Unique)
     if ($pids.Count -eq 0) { return }
@@ -2274,10 +2384,12 @@ function Remove-ExistingInstall {
     if ($newPath -ne $curPath) { [Environment]::SetEnvironmentVariable("Path", $newPath, "User") }
     $sc = "$env:USERPROFILE\Desktop\$APP_NAME.lnk"
     if (Test-Path $sc) { Remove-Item $sc -Force -ErrorAction SilentlyContinue }
-    $uninstLink = Join-Path $Path "Uninstall.lnk"
-    if (Test-Path $uninstLink) { Remove-Item $uninstLink -Force -ErrorAction SilentlyContinue }
-    $updLink = Join-Path $Path "Check for Updates.lnk"
-    if (Test-Path $updLink) { Remove-Item $updLink -Force -ErrorAction SilentlyContinue }
+    $uninstLink  = Join-Path $Path "Uninstall.lnk"
+    if (Test-Path $uninstLink)  { Remove-Item $uninstLink  -Force -ErrorAction SilentlyContinue }
+    $repairLink  = Join-Path $Path "Repair.lnk"
+    if (Test-Path $repairLink)  { Remove-Item $repairLink  -Force -ErrorAction SilentlyContinue }
+    $updLink     = Join-Path $Path "Check for Updates.lnk"
+    if (Test-Path $updLink)     { Remove-Item $updLink     -Force -ErrorAction SilentlyContinue }
 
     # - 2. Flush Explorer shell cache AFTER registry keys are gone ------------
     #    This makes Explorer release icon handles for .ali files and the folder
@@ -2391,9 +2503,9 @@ public class ShellNotify {
 
                # Main launcher
                $lnk = $wsh.CreateShortcut("$dir\$APP_NAME.lnk")
-               $lnk.TargetPath       = "wscript.exe"
-               $lnk.Arguments        = "`"$lib\startup.vbs`""
-               $lnk.WorkingDirectory = $lib
+               $lnk.TargetPath       = "$data\$APP_NAME.cmd"
+               $lnk.Arguments        = ""
+               $lnk.WorkingDirectory = $data
                $lnk.IconLocation     = "$assets\$APP_NAME_LOW.ico,0"
                $lnk.Description      = "Launch $APP_NAME"
                $lnk.Save()
@@ -2406,6 +2518,15 @@ public class ShellNotify {
                $upd.IconLocation     = "$env:SystemRoot\system32\shell32.dll,238"
                $upd.Description      = "Check for $APP_NAME updates"
                $upd.Save()
+
+               # Repair shortcut
+               $repair = $wsh.CreateShortcut("$dir\Repair.lnk")
+               $repair.TargetPath       = "wscript.exe"
+               $repair.Arguments        = "`"$lib\repair.vbs`""
+               $repair.WorkingDirectory = $env:TEMP
+               $repair.Description      = "Repair or reinstall $APP_NAME"
+               $repair.IconLocation     = "$env:SystemRoot\system32\imageres.dll,109"
+               $repair.Save()
 
                # Uninstall shortcut
                $uninst = $wsh.CreateShortcut("$dir\Uninstall.lnk")
@@ -2470,9 +2591,9 @@ public class ShellNotify {
                    Write-Log "Startup: creating $startupLnk"
                    $wsh = New-Object -ComObject WScript.Shell
                    $lnk = $wsh.CreateShortcut($startupLnk)
-                   $lnk.TargetPath       = "wscript.exe"
-                   $lnk.Arguments        = "`"$lib\startup.vbs`""
-                   $lnk.WorkingDirectory = $lib
+                   $lnk.TargetPath       = "$data\$APP_NAME.cmd"
+                   $lnk.Arguments        = ""
+                   $lnk.WorkingDirectory = $data
                    $lnk.IconLocation     = "$assets\$APP_NAME_LOW.ico,0"
                    $lnk.Description      = "Start $APP_NAME on login"
                    $lnk.Save()
@@ -2549,9 +2670,9 @@ public class ShellNotify {
                    Write-Log "Start Menu: creating $startMenuLnk"
                    $wsh = New-Object -ComObject WScript.Shell
                    $lnk = $wsh.CreateShortcut($startMenuLnk)
-                   $lnk.TargetPath       = "wscript.exe"
-                   $lnk.Arguments        = "`"$lib\startup.vbs`""
-                   $lnk.WorkingDirectory = $lib
+                   $lnk.TargetPath       = "$data\$APP_NAME.cmd"
+                   $lnk.Arguments        = ""
+                   $lnk.WorkingDirectory = $data
                    $lnk.IconLocation     = "$assets\$APP_NAME_LOW.ico,0"
                    $lnk.Save()
                } else {
@@ -2607,9 +2728,9 @@ public class ShellNotify {
                    Write-Log "Desktop shortcut: creating"
                    $shell = New-Object -ComObject WScript.Shell
                    $sc    = $shell.CreateShortcut("$env:USERPROFILE\Desktop\$APP_NAME.lnk")
-                   $sc.TargetPath       = "wscript.exe"
-                   $sc.Arguments        = "`"$lib\startup.vbs`""
-                   $sc.WorkingDirectory = $lib
+                   $sc.TargetPath       = "$data\$APP_NAME.cmd"
+                   $sc.Arguments        = ""
+                   $sc.WorkingDirectory = $data
                    $sc.IconLocation     = "$assets\$APP_NAME_LOW.ico,0"
                    $sc.Save()
                } else {
