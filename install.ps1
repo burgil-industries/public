@@ -1835,7 +1835,7 @@ public class ShellNotify {
 function Start-Installation {
     $dir    = $txtDir.Text
     $data   = "$dir\data"
-    $app    = "$data\app"
+    $app    = "$data\src"
     $lib    = "$data\lib"
     $assets = "$data\assets"
     $logs   = "$data\logs"
@@ -2234,7 +2234,7 @@ $btnNext.Add_Click({
         Write-Log "Finish clicked"
         if ($chkLaunch.Checked) {
             Write-Log "Launching $APP_NAME"
-            Start-Process cmd.exe -ArgumentList "/c `"$($txtDir.Text)\data\$APP_NAME.cmd`""
+            Start-Process "$($txtDir.Text)\$APP_NAME.lnk"
         }
         $form.Close()
     } else {
