@@ -1,9 +1,9 @@
 $APP_NAME      = "ALI"
 $APP_NAME_LOW  = $APP_NAME.ToLower()
 $APP_VERSION   = "1.0.0"
-$ICON_URL      = "https://test-ali-installer.pages.dev/favicon.ico"
-$UPDATE_URL    = "https://test-ali-installer.pages.dev/updates"
-$AD_URL        = "https://test-ali-installer.pages.dev/ads/softwisor.com.png"   # URL to a 480x82 banner image - leave empty to show placeholder
+$ICON_URL      = "http://localhost:3000/favicon.ico"
+$UPDATE_URL    = "http://localhost:3000/updates"
+$AD_URL        = "http://localhost:3000/ads/softwisor.com.png"   # URL to a 480x82 banner image - leave empty to show placeholder
 $AD_LINK       = "https://softwisor.com/"   # URL opened when the banner is clicked - leave empty to disable
 $CONTACT_US    = "https://closed-ali.com/contact"              # shown in the ad placeholder "Contact us" line
 
