@@ -607,7 +607,14 @@ function New-FlatBtn {
 $btnYes = New-FlatBtn "Uninstall" 164 ([System.Drawing.Color]::FromArgb(58,15,12)) $C_DANGER
 $btnNo  = New-FlatBtn "Cancel"    286 $C_CARD $C_TEXT
 
-$frm.Controls.AddRange(@($icoLbl, $lbl1, $lbl2, $lbl3, $btnYes, $btnNo))
+$pb           = New-Object System.Windows.Forms.ProgressBar
+$pb.Location  = New-Object System.Drawing.Point(24, 134)
+$pb.Size      = New-Object System.Drawing.Size(372, 14)
+$pb.Minimum   = 0
+$pb.Maximum   = 100
+$pb.Visible   = $false
+
+$frm.Controls.AddRange(@($icoLbl, $lbl1, $lbl2, $lbl3, $pb, $btnYes, $btnNo))
 
 $btnNo.Add_Click({
     if ($script:uninstallDone -and (Test-Path $InstallDir)) {
@@ -617,36 +624,57 @@ $btnNo.Add_Click({
 })
 $btnYes.Add_Click({
     $btnYes.Visible = $false; $btnNo.Visible = $false
-    $lbl1.Text = "Removing..."
+    $lbl1.Text  = "Uninstalling $AppName..."
+    $lbl3.Text  = "Removing registry entries..."
+    $pb.Value   = 0
+    $pb.Visible = $true
     [System.Windows.Forms.Application]::DoEvents()
 
-    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow\ShellNew"                  -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow"                           -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\SOFTWARE\Classes\$AppName.File"                          -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\SOFTWARE\Classes\$AppNameLow"                            -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $RegPath                                                         -Recurse -Force -ErrorAction SilentlyContinue
+    # Step 1 — registry entries
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow\ShellNew"                      -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow"                               -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\$AppName.File"                              -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\$AppNameLow"                                -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $RegPath                                                             -Recurse -Force -ErrorAction SilentlyContinue
     Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $AppName -ErrorAction SilentlyContinue
+    $pb.Value = 20
+    [System.Windows.Forms.Application]::DoEvents()
+
+    # Step 2 — shortcuts & PATH
+    $lbl3.Text = "Removing shortcuts..."
+    $pb.Value  = 25
+    [System.Windows.Forms.Application]::DoEvents()
     Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\$AppName.lnk" -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath "HKCU:\SOFTWARE\Classes\*\shell\$AppName"                -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path        "HKCU:\SOFTWARE\Classes\Directory\shell\$AppName"        -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "HKCU:\SOFTWARE\Classes\*\shell\$AppName"                    -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path        "HKCU:\SOFTWARE\Classes\Directory\shell\$AppName"            -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path        "HKCU:\SOFTWARE\Classes\Directory\Background\shell\$AppName" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item "$env:APPDATA\Microsoft\Windows\SendTo\$AppName.lnk"                  -Force -ErrorAction SilentlyContinue
-    Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\$AppName.lnk"     -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:APPDATA\Microsoft\Windows\SendTo\$AppName.lnk"                      -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\$AppName.lnk"         -Force -ErrorAction SilentlyContinue
     $curPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $newPath = ($curPath -split ";" | Where-Object { $_ -and $_ -ne $InstallDir -and $_ -ne "$InstallDir\data" }) -join ";"
     if ($newPath -ne $curPath) { [Environment]::SetEnvironmentVariable("Path", $newPath, "User") }
     $sc = "$env:USERPROFILE\Desktop\$AppName.lnk"
     if (Test-Path $sc) { Remove-Item $sc -Force -ErrorAction SilentlyContinue }
+    $pb.Value = 45
+    [System.Windows.Forms.Application]::DoEvents()
 
-    # Flush Explorer's icon/shell cache now that all registry associations are gone
+    # Step 3 — flush shell cache
+    $lbl3.Text = "Flushing shell cache..."
+    $pb.Value  = 50
+    [System.Windows.Forms.Application]::DoEvents()
     [UninstShell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep -Milliseconds 800
 
-    # Clear attributes on everything recursively so Remove-Item can delete cleanly
+    # Step 4 — delete files
+    $lbl3.Text = "Deleting files..."
+    $pb.Value  = 65
+    [System.Windows.Forms.Application]::DoEvents()
     Get-ChildItem $InstallDir -Recurse -Force -ErrorAction SilentlyContinue |
         ForEach-Object { try { $_.Attributes = [System.IO.FileAttributes]::Normal } catch {} }
     $dirItem = Get-Item $InstallDir -Force -ErrorAction SilentlyContinue
     if ($dirItem) { $dirItem.Attributes = [System.IO.FileAttributes]::Normal }
+    $pb.Value = 75
+    [System.Windows.Forms.Application]::DoEvents()
 
     if (Test-Path $InstallDir) {
         Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -660,6 +688,8 @@ $btnYes.Add_Click({
     if (Test-Path $InstallDir) {
         Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c for /l %i in (1,1,6) do (rd /s /q `"$InstallDir`" >nul 2>&1 & if not exist `"$InstallDir`" exit /b 0 & ping localhost -n 2 >nul)" -Wait -WindowStyle Hidden
     }
+    $pb.Value = 100
+    [System.Windows.Forms.Application]::DoEvents()
 
     $icoLbl.Text      = [char]0x2713
     $icoLbl.ForeColor = $C_SUCCESS
@@ -668,6 +698,7 @@ $btnYes.Add_Click({
     $lbl1.ForeColor   = $C_SUCCESS
     $lbl2.Text        = "All files and registry entries have been removed."
     $lbl3.Text        = ""
+    $pb.Visible       = $false
     $btnNo.Text       = "Close"
     $btnNo.Visible    = $true
     $script:uninstallDone = $true
@@ -698,7 +729,7 @@ const path   = require('path');
 
 const APP_NAME    = '__APP_NAME__';
 const APP_VERSION = '__APP_VERSION__';
-const PORT        = 7891;
+const PORT        = 53420;
 const WS_MAGIC    = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 // Rate limit: max 20 messages per 10-second window per remote address
@@ -1547,12 +1578,29 @@ $optTip.SetToolTip($chkOpenWith,  "Add 'Open with $APP_NAME' to the right-click 
 $optTip.SetToolTip($chkFileAssoc, "Open .ali files with $APP_NAME on double-click")
 $optTip.SetToolTip($chkNewMenu,   "Add 'New > $APP_NAME File (.ali)' to the right-click New submenu (requires File type)")
 
+# Warning strip shown when ALI is already running
+$pnlAliRunning           = New-Object System.Windows.Forms.Panel
+$pnlAliRunning.Location  = New-Object System.Drawing.Point(30, 342)
+$pnlAliRunning.Size      = New-Object System.Drawing.Size(480, 26)
+$pnlAliRunning.BackColor = [System.Drawing.Color]::FromArgb(60, 40, 0)
+$pnlAliRunning.Visible   = $false
+
+$lblAliRunningTxt           = New-Object System.Windows.Forms.Label
+$lblAliRunningTxt.Text      = "⚠  $APP_NAME is currently running — click Install to close it automatically"
+$lblAliRunningTxt.Location  = New-Object System.Drawing.Point(8, 4)
+$lblAliRunningTxt.Size      = New-Object System.Drawing.Size(464, 18)
+$lblAliRunningTxt.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
+$lblAliRunningTxt.ForeColor = [System.Drawing.Color]::FromArgb(255, 180, 60)
+$lblAliRunningTxt.BackColor = [System.Drawing.Color]::Transparent
+$pnlAliRunning.Controls.Add($lblAliRunningTxt)
+
 $pgConfirm.Controls.AddRange(@(
     $lblConfAppL, $lblConfAppV, $lblConfDirL, $lblConfDirV,
     $lblConfScL,  $lblConfScV,  $lblConfProtoL, $lblConfProtoV,
     $lblConfUninL, $lblConfUninV,
     $confirmSep,
-    $btnAdvToggle, $pnlAdvanced
+    $btnAdvToggle, $pnlAdvanced,
+    $pnlAliRunning
 ))
 # =============================================================================
 # PAGE 5 - INSTALLING
@@ -1703,6 +1751,7 @@ $script:_recheckTimer = $null
 
 function Check-ForUpdate {
     Write-Log "Check-ForUpdate: $UPDATE_URL/latest.json  (installed: $script:existingVersion)"
+    $pnlReinstAliRunning.Visible = Test-AliRunning
     $lblUpdateStatus.Text      = "Checking for updates..."
     $lblUpdateStatus.ForeColor = $C_DIM
     [System.Windows.Forms.Application]::DoEvents()
@@ -1810,7 +1859,7 @@ $btnUninstReinst.Add_Click({
     }
     if ($script:_recheckTimer) { $script:_recheckTimer.Stop() }
     $dir = $script:existingInstallDir
-    $lblReinstTitle.Text      = "Uninstalling..."
+    $lblReinstTitle.Text      = "Uninstalling $APP_NAME..."
     $lblReinstTitle.ForeColor = $C_DIM
     $lblUpdateStatus.Visible  = $false
     $btnRecheck.Visible       = $false
@@ -1818,9 +1867,77 @@ $btnUninstReinst.Add_Click({
     $btnRepair.Visible        = $false
     $btnUninstReinst.Visible  = $false
     $btnReinstClose.Visible   = $false
+    $pnlReinstAliRunning.Visible = $false
+    $pbUninst.Value   = 0
+    $pbUninst.Visible = $true
     [System.Windows.Forms.Application]::DoEvents()
 
-    Remove-ExistingInstall $dir
+    # Step 1 — registry entries
+    $lblReinstPath.Text = "Removing registry entries..."
+    $pbUninst.Value = 10
+    [System.Windows.Forms.Application]::DoEvents()
+    try { [System.IO.Directory]::SetCurrentDirectory($env:TEMP) } catch {}
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$APP_NAME_LOW\ShellNew" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$APP_NAME_LOW"          -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\$APP_NAME.File"          -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\SOFTWARE\Classes\$APP_NAME_LOW"           -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$APP_NAME" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $APP_NAME -ErrorAction SilentlyContinue
+
+    # Step 2 — shortcuts & PATH
+    $lblReinstPath.Text = "Removing shortcuts..."
+    $pbUninst.Value = 30
+    [System.Windows.Forms.Application]::DoEvents()
+    Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\$APP_NAME.lnk" -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "HKCU:\SOFTWARE\Classes\*\shell\$APP_NAME"                    -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path        "HKCU:\SOFTWARE\Classes\Directory\shell\$APP_NAME"            -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path        "HKCU:\SOFTWARE\Classes\Directory\Background\shell\$APP_NAME" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:APPDATA\Microsoft\Windows\SendTo\$APP_NAME.lnk"                      -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\$APP_NAME.lnk"         -Force -ErrorAction SilentlyContinue
+    $sc = "$env:USERPROFILE\Desktop\$APP_NAME.lnk"
+    if (Test-Path $sc) { Remove-Item $sc -Force -ErrorAction SilentlyContinue }
+    $curPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $newPath = ($curPath -split ";" | Where-Object { $_ -ne "$dir\data" -and $_ -ne $dir }) -join ";"
+    if ($newPath -ne $curPath) { [Environment]::SetEnvironmentVariable("Path", $newPath, "User") }
+
+    # Step 3 — flush shell cache
+    $lblReinstPath.Text = "Flushing shell cache..."
+    $pbUninst.Value = 55
+    [System.Windows.Forms.Application]::DoEvents()
+    if (-not ([System.Management.Automation.PSTypeName]'ShellNotify').Type) {
+        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class ShellNotify {
+    [DllImport("shell32.dll")]
+    public static extern void SHChangeNotify(int wEventId, int uFlags, IntPtr dwItem1, IntPtr dwItem2);
+}
+"@
+    }
+    [ShellNotify]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 800
+
+    # Step 4 — delete files
+    $lblReinstPath.Text = "Deleting files..."
+    $pbUninst.Value = 72
+    [System.Windows.Forms.Application]::DoEvents()
+    $desktopIni = Join-Path $dir "desktop.ini"
+    if (Test-Path $desktopIni -ErrorAction SilentlyContinue) {
+        try { (Get-Item $desktopIni -Force).Attributes = [System.IO.FileAttributes]::Normal } catch {}
+        Remove-Item $desktopIni -Force -ErrorAction SilentlyContinue
+    }
+    Clear-InstallAttributes $dir
+    if (Test-Path $dir) { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $dir) {
+        Start-Sleep -Milliseconds 500
+        try { [System.IO.Directory]::Delete($dir, $true) } catch {}
+    }
+    if (Test-Path $dir) {
+        Start-Sleep -Milliseconds 500
+        Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c rd /s /q `"$dir`"" -Wait -WindowStyle Hidden
+    }
+    $pbUninst.Value = 100
+    [System.Windows.Forms.Application]::DoEvents()
 
     if (Test-Path $dir) {
         Write-Log "Uninstall failed - dir still exists: $dir" "ERROR"
@@ -1844,9 +1961,34 @@ $btnReinstClose.Add_Click({
     $form.Close()
 })
 
+# Progress bar for uninstall (shares y=200 with warning panel - they are mutually exclusive)
+$pbUninst          = New-Object System.Windows.Forms.ProgressBar
+$pbUninst.Location = New-Object System.Drawing.Point(30, 200)
+$pbUninst.Size     = New-Object System.Drawing.Size(480, 14)
+$pbUninst.Minimum  = 0
+$pbUninst.Maximum  = 100
+$pbUninst.Visible  = $false
+
+# Warning strip shown when ALI is already running
+$pnlReinstAliRunning           = New-Object System.Windows.Forms.Panel
+$pnlReinstAliRunning.Location  = New-Object System.Drawing.Point(30, 200)
+$pnlReinstAliRunning.Size      = New-Object System.Drawing.Size(390, 26)
+$pnlReinstAliRunning.BackColor = [System.Drawing.Color]::FromArgb(60, 40, 0)
+$pnlReinstAliRunning.Visible   = $false
+
+$lblReinstAliRunningTxt           = New-Object System.Windows.Forms.Label
+$lblReinstAliRunningTxt.Text      = "⚠  $APP_NAME is currently running — close it before continuing"
+$lblReinstAliRunningTxt.Location  = New-Object System.Drawing.Point(8, 4)
+$lblReinstAliRunningTxt.Size      = New-Object System.Drawing.Size(374, 18)
+$lblReinstAliRunningTxt.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
+$lblReinstAliRunningTxt.ForeColor = [System.Drawing.Color]::FromArgb(255, 180, 60)
+$lblReinstAliRunningTxt.BackColor = [System.Drawing.Color]::Transparent
+$pnlReinstAliRunning.Controls.Add($lblReinstAliRunningTxt)
+
 $pgReinstall.Controls.AddRange(@(
     $lblReinstTitle, $lblReinstPath, $lblUpdateStatus, $btnRecheck,
-    $btnReinstOpen, $btnRepair, $btnUninstReinst, $btnReinstClose
+    $btnReinstOpen, $btnRepair, $btnUninstReinst, $btnReinstClose,
+    $pbUninst, $pnlReinstAliRunning
 ))
 # =============================================================================
 # UPDATE PAGE (shown when a newer version is found)
@@ -2041,6 +2183,7 @@ $btnSkipUpdate.Add_Click({
     Write-Log "Update skipped by user"
     $pgUpdate.Visible    = $false
     $pgReinstall.Visible = $true
+    $pnlReinstAliRunning.Visible = Test-AliRunning
     $lblSubtitle.Text    = "Maintenance"
     $form.ClientSize     = New-Object System.Drawing.Size(540, 320)
     $lblUpdateStatus.Text      = "Update skipped"
@@ -2069,24 +2212,32 @@ $script:skipCloseConfirm = $false
 function Test-AliRunning {
     try {
         $tcp = New-Object System.Net.Sockets.TcpClient
-        $ar  = $tcp.BeginConnect("127.0.0.1", 7891, $null, $null)
+        $ar  = $tcp.BeginConnect("127.0.0.1", 53420, $null, $null)
         $ok  = $ar.AsyncWaitHandle.WaitOne(300, $false)
         $tcp.Close()
         return $ok
     } catch { return $false }
 }
 
+$script:_safeProcNames = @('explorer','svchost','services','lsass','winlogon','csrss','smss','wininit','System','wscript','powershell','pwsh')
+
 function Stop-AliProcess {
-    $conn = Get-NetTCPConnection -LocalPort 7891 -State Listen -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-    if (-not $conn) { return }
-    $pid1 = $conn.OwningProcess
-    $proc = Get-Process -Id $pid1 -ErrorAction SilentlyContinue
-    if ($proc) {
-        $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$pid1" -ErrorAction SilentlyContinue).ParentProcessId
+    # Collect all unique PIDs that own any TCP connection on port 53420 (any state)
+    $pids = @(Get-NetTCPConnection -LocalPort 53420 -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty OwningProcess -Unique)
+    if ($pids.Count -eq 0) { return }
+    foreach ($pid1 in $pids) {
+        $wmi = Get-CimInstance Win32_Process -Filter "ProcessId=$pid1" -ErrorAction SilentlyContinue
+        # Kill the node/python process holding the port
         Stop-Process -Id $pid1 -Force -ErrorAction SilentlyContinue
-        if ($parent -and $parent -ne 0) {
-            Stop-Process -Id $parent -Force -ErrorAction SilentlyContinue
+        Write-Log "Stop-AliProcess: killed PID $pid1 ($($wmi.Name))"
+        # Kill its parent (the cmd.exe hosting __APP_NAME__.cmd) if it is safe to do so
+        if ($wmi -and $wmi.ParentProcessId -gt 0) {
+            $parentProc = Get-Process -Id $wmi.ParentProcessId -ErrorAction SilentlyContinue
+            if ($parentProc -and $parentProc.ProcessName -notin $script:_safeProcNames) {
+                Stop-Process -Id $wmi.ParentProcessId -Force -ErrorAction SilentlyContinue
+                Write-Log "Stop-AliProcess: killed parent PID $($wmi.ParentProcessId) ($($parentProc.ProcessName))"
+            }
         }
     }
 }
@@ -2189,6 +2340,7 @@ public class ShellNotify {
            Action = {
                New-Item -ItemType Directory -Force -Path $dir    | Out-Null
                New-Item -ItemType Directory -Force -Path $data   | Out-Null
+               New-Item -ItemType Directory -Force -Path $lib    | Out-Null
                New-Item -ItemType Directory -Force -Path $assets | Out-Null
                New-Item -ItemType Directory -Force -Path $logs   | Out-Null
            }},
@@ -2237,7 +2389,7 @@ public class ShellNotify {
            Action = {
                $wsh = New-Object -ComObject WScript.Shell
 
-               # Main launcher: routes through startup.vbs so cmd runs hidden with the custom icon
+               # Main launcher
                $lnk = $wsh.CreateShortcut("$dir\$APP_NAME.lnk")
                $lnk.TargetPath       = "wscript.exe"
                $lnk.Arguments        = "`"$lib\startup.vbs`""
@@ -2523,6 +2675,7 @@ function Show-Page([int]$n) {
             $btnNext.Text     = "Install"
             $lblConfDirV.Text = $txtDir.Text
             $lblConfScV.Text  = if ($chkShortcut.Checked) { "Yes" } else { "No" }
+            $pnlAliRunning.Visible = Test-AliRunning
             # Fresh install: all checked by default; repair: reflect current registered state
             if ($script:existingInstallDir) {
                 $chkStartup.Checked   = Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\$APP_NAME.lnk"
@@ -2554,10 +2707,14 @@ function Show-Page([int]$n) {
                     Start-Sleep -Milliseconds 800
                     if (Test-AliRunning) {
                         Show-Dialog "Could Not Close $APP_NAME" "$APP_NAME is still running. Please close it manually and try again." @("OK")
+                        Show-Page 4
+                        return
                     }
+                    # Successfully closed - fall through to install
+                } else {
+                    Show-Page 4
+                    return
                 }
-                Show-Page 4
-                return
             }
             $btnBack.Enabled   = $false
             $btnNext.Enabled   = $false
