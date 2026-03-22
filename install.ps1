@@ -370,7 +370,7 @@ try {
 
     if ($latest -gt $installed) {
         $frm = New-Object System.Windows.Forms.Form
-        $frm.Text            = "$APP_NAME — Update Available"
+        $frm.Text            = "$APP_NAME - Update Available"
         $frm.ClientSize      = New-Object System.Drawing.Size(400, 152)
         $frm.StartPosition   = "CenterScreen"
         $frm.FormBorderStyle = "FixedDialog"
@@ -735,7 +735,7 @@ $btnYes.Add_Click({
     $pb.Visible = $true
     [System.Windows.Forms.Application]::DoEvents()
 
-    # Step 1 — registry entries
+    # Step 1 - registry entries
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow\ShellNew"                      -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$AppNameLow"                               -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "HKCU:\SOFTWARE\Classes\$AppName.File"                              -Recurse -Force -ErrorAction SilentlyContinue
@@ -745,7 +745,7 @@ $btnYes.Add_Click({
     $pb.Value = 20
     [System.Windows.Forms.Application]::DoEvents()
 
-    # Step 2 — shortcuts & PATH
+    # Step 2 - shortcuts & PATH
     $lbl3.Text = "Removing shortcuts..."
     $pb.Value  = 25
     [System.Windows.Forms.Application]::DoEvents()
@@ -767,14 +767,14 @@ $btnYes.Add_Click({
     $pb.Value = 45
     [System.Windows.Forms.Application]::DoEvents()
 
-    # Step 3 — flush shell cache
+    # Step 3 - flush shell cache
     $lbl3.Text = "Flushing shell cache..."
     $pb.Value  = 50
     [System.Windows.Forms.Application]::DoEvents()
     [UninstShell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep -Milliseconds 800
 
-    # Step 4 — delete files
+    # Step 4 - delete files
     $lbl3.Text = "Deleting files..."
     $pb.Value  = 65
     [System.Windows.Forms.Application]::DoEvents()
@@ -1982,7 +1982,7 @@ $btnUninstReinst.Add_Click({
     $pbUninst.Visible = $true
     [System.Windows.Forms.Application]::DoEvents()
 
-    # Step 1 — registry entries
+    # Step 1 - registry entries
     $lblReinstPath.Text = "Removing registry entries..."
     $pbUninst.Value = 10
     [System.Windows.Forms.Application]::DoEvents()
@@ -1994,7 +1994,7 @@ $btnUninstReinst.Add_Click({
     Remove-Item -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$APP_NAME" -Recurse -Force -ErrorAction SilentlyContinue
     Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $APP_NAME -ErrorAction SilentlyContinue
 
-    # Step 2 — shortcuts & PATH
+    # Step 2 - shortcuts & PATH
     $lblReinstPath.Text = "Removing shortcuts..."
     $pbUninst.Value = 30
     [System.Windows.Forms.Application]::DoEvents()
@@ -2014,7 +2014,7 @@ $btnUninstReinst.Add_Click({
     $newPath = ($curPath -split ";" | Where-Object { $_ -ne "$dir\data" -and $_ -ne $dir }) -join ";"
     if ($newPath -ne $curPath) { [Environment]::SetEnvironmentVariable("Path", $newPath, "User") }
 
-    # Step 3 — flush shell cache
+    # Step 3 - flush shell cache
     $lblReinstPath.Text = "Flushing shell cache..."
     $pbUninst.Value = 55
     [System.Windows.Forms.Application]::DoEvents()
@@ -2031,7 +2031,7 @@ public class ShellNotify {
     [ShellNotify]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep -Milliseconds 800
 
-    # Step 4 — delete files
+    # Step 4 - delete files
     $lblReinstPath.Text = "Deleting files..."
     $pbUninst.Value = 72
     [System.Windows.Forms.Application]::DoEvents()
@@ -2324,9 +2324,11 @@ $script:skipCloseConfirm = $false
 # --- Install helpers ------
 
 function Test-AliRunning {
-    # GetNetTCPConnection is reliable - it reads kernel state directly
-    $conns = Get-NetTCPConnection -LocalPort 53420 -ErrorAction SilentlyContinue
-    return ($null -ne $conns -and @($conns).Count -gt 0)
+    # IPGlobalProperties is pure .NET - no module load, runs in <5ms
+    try {
+        $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+        return [bool]($listeners | Where-Object { $_.Port -eq 53420 })
+    } catch { return $false }
 }
 
 $script:_safeProcNames = @('explorer','svchost','services','lsass','winlogon','csrss','smss','wininit','System','wscript','powershell','pwsh')
@@ -2796,7 +2798,16 @@ function Show-Page([int]$n) {
             $btnNext.Text     = "Install"
             $lblConfDirV.Text = $txtDir.Text
             $lblConfScV.Text  = if ($chkShortcut.Checked) { "Yes" } else { "No" }
-            $pnlAliRunning.Visible = Test-AliRunning
+            $pnlAliRunning.Visible = $false
+            # Defer the port check so the page paints before we query the network stack
+            if ($script:_aliCheckTimer) { $script:_aliCheckTimer.Stop() }
+            $script:_aliCheckTimer = New-Object System.Windows.Forms.Timer
+            $script:_aliCheckTimer.Interval = 80
+            $script:_aliCheckTimer.Add_Tick({
+                $script:_aliCheckTimer.Stop()
+                $pnlAliRunning.Visible = Test-AliRunning
+            })
+            $script:_aliCheckTimer.Start()
             # Fresh install: all checked by default; repair: reflect current registered state
             if ($script:existingInstallDir) {
                 $chkStartup.Checked   = Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\$APP_NAME.lnk"
