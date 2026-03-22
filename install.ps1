@@ -352,10 +352,6 @@ Set sh = CreateObject("WScript.Shell")
 sh.Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & scriptDir & "check-update.ps1""", 0, False
 '@
 
-$FILE_DATA_LIB_OK_TXT = @'
-asdasdasd
-'@
-
 $FILE_DATA_LIB_ROUTER_PS1 = @'
 param([string]$Uri)
 
@@ -629,18 +625,6 @@ $FILE_DATA_SRC_APP_PY = @'
 print('Hello World - Python component!')
 '@
 
-$FILE_DATA_SRC_TEST_TXT = @'
-hi
-'@
-
-$FILE_DATA_SRC_YTO_ASD_ASD = @'
-בדיקה
-'@
-
-$FILE_DATA_TEST42 = @'
-asd42
-'@
-
 $FILE_LICENSE_TXT = @'
 ALI Source License 1.0
 Copyright (c) 2026 ALI
@@ -728,15 +712,10 @@ USE OR INABILITY TO USE THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
 OF SUCH DAMAGES.
 '@
 
-$FILE_TEST_HERE_TXT = @'
-csv
-'@
-
 $FILE_MANIFEST = [ordered]@{
     'data/__APP_NAME__.cmd' = $FILE_DATA___APP_NAME___CMD
     'data/lib/check-update.ps1' = $FILE_DATA_LIB_CHECK_UPDATE_PS1
     'data/lib/check-update.vbs' = $FILE_DATA_LIB_CHECK_UPDATE_VBS
-    'data/lib/ok.txt' = $FILE_DATA_LIB_OK_TXT
     'data/lib/router.ps1' = $FILE_DATA_LIB_ROUTER_PS1
     'data/lib/router.vbs' = $FILE_DATA_LIB_ROUTER_VBS
     'data/lib/sendto.vbs' = $FILE_DATA_LIB_SENDTO_VBS
@@ -745,11 +724,7 @@ $FILE_MANIFEST = [ordered]@{
     'data/lib/uninstall.vbs' = $FILE_DATA_LIB_UNINSTALL_VBS
     'data/src/app.js' = $FILE_DATA_SRC_APP_JS
     'data/src/app.py' = $FILE_DATA_SRC_APP_PY
-    'data/src/test.txt' = $FILE_DATA_SRC_TEST_TXT
-    'data/src/yto/asd.asd' = $FILE_DATA_SRC_YTO_ASD_ASD
-    'data/test42' = $FILE_DATA_TEST42
     'LICENSE.txt' = $FILE_LICENSE_TXT
-    'test.here.txt' = $FILE_TEST_HERE_TXT
 }
 
 # --- Encoding-safe file writer ----------------------
