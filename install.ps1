@@ -465,6 +465,39 @@ $AppName = '__APP_NAME__'
 
 Add-Type -AssemblyName System.Windows.Forms
 
+# Permission descriptions for human-readable display
+$PermDescriptions = @{
+    'fs.read'        = 'Read files from your computer'
+    'fs.write'       = 'Write files to your computer'
+    'net.listen'     = 'Start a local server'
+    'net.connect'    = 'Connect to the internet'
+    'system.exec'    = 'Run system commands'
+    'ctx.provide'    = 'Provide services to other plugins'
+    'ctx.broadcast'  = 'Send messages to all connected clients'
+}
+
+function Get-PermissionDescription([string]$perm) {
+    $base = ($perm -split ':')[0]
+    $scope = if ($perm.Contains(':')) { ($perm -split ':', 2)[1] } else { $null }
+    $desc = $PermDescriptions[$base]
+    if (-not $desc) { $desc = $perm }
+    if ($scope -and $scope -ne '${dataDir}') {
+        $desc += " ($scope)"
+    }
+    return $desc
+}
+
+function Format-PermissionList([string[]]$permissions) {
+    if (-not $permissions -or $permissions.Count -eq 0) {
+        return "  (none)"
+    }
+    $lines = @()
+    foreach ($p in $permissions) {
+        $lines += "  - $(Get-PermissionDescription $p)"
+    }
+    return ($lines -join "`n")
+}
+
 try {
     $parsed = [System.Uri]$Uri
     $host_  = $parsed.Host.ToLower()
@@ -483,10 +516,11 @@ try {
     switch ($host_) {
 
         'install' {
-            # ali://install/PLUGIN_ID?version=1.0.0&deps=dep1,dep2
+            # ali://install/PLUGIN_ID?version=1.0.0&deps=dep1,dep2&permissions=fs.read,net.connect
             $pluginId = $path_
             $version  = $query['version']
             $deps     = $query['deps']
+            $perms    = $query['permissions']
 
             if (-not $pluginId) {
                 [System.Windows.Forms.MessageBox]::Show(
@@ -500,6 +534,13 @@ try {
             $msg = "Plugin: $pluginId"
             if ($version) { $msg += "`nVersion: $version" }
             if ($deps)    { $msg += "`nRequires: $($deps -replace ',', ', ')" }
+
+            # Show permissions if provided
+            if ($perms) {
+                $permList = $perms -split ','
+                $msg += "`n`nPermissions requested:`n$(Format-PermissionList $permList)"
+            }
+
             $msg += "`n`nInstall this plugin?"
 
             $result = [System.Windows.Forms.MessageBox]::Show(
@@ -513,6 +554,46 @@ try {
                 [System.Windows.Forms.MessageBox]::Show(
                     "Plugin '$pluginId' installed successfully.",
                     "$AppName - Install Plugin",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+            }
+        }
+
+        'install-package' {
+            # ali://install-package/PACKAGE_ID?plugins=core,ui,settings
+            $packageId = $path_
+            $pluginsList = $query['plugins']
+
+            if (-not $packageId) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    'No package ID specified.',
+                    "$AppName - Install Package",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+                break
+            }
+
+            $plugins = if ($pluginsList) { $pluginsList -split ',' } else { @() }
+
+            $msg = "Package: $packageId"
+            $msg += "`nPlugins: $($plugins -join ', ')"
+            $msg += "`n`nInstall all $($plugins.Count) plugins in this package?"
+
+            $result = [System.Windows.Forms.MessageBox]::Show(
+                $msg,
+                "$AppName - Install Package",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Question)
+
+            if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
+                $installed = @()
+                foreach ($p in $plugins) {
+                    # Placeholder: actual plugin installation logic goes here
+                    $installed += $p
+                }
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Package '$packageId' installed successfully.`n`nPlugins installed: $($installed -join ', ')",
+                    "$AppName - Install Package",
                     [System.Windows.Forms.MessageBoxButtons]::OK,
                     [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
             }
@@ -835,6 +916,7 @@ const http   = require('http');
 const crypto = require('crypto');
 const fs     = require('fs');
 const path   = require('path');
+const { PermissionError, checkPermission, validatePermissions, expandPermissions } = require('./permissions');
 
 const APP_NAME    = '__APP_NAME__';
 const APP_VERSION = '__APP_VERSION__';
@@ -922,6 +1004,8 @@ const sockets     = new Set();
 const wsHandlers  = new Map();
 // Loaded plugin manifests: id -> { id, name, version, ... }
 const loadedPlugins = {};
+// Shared services map (cross-plugin)
+const services = new Map();
 
 function broadcast(obj) {
     for (const s of sockets) send(s, obj);
@@ -932,9 +1016,14 @@ function readPluginsJson() {
     catch (_) { return {}; }
 }
 
-// Plugin context - passed to each plugin's install(ctx) function
-function createContext() {
-    const services = new Map();
+// ── Per-plugin context with permission enforcement ───────────────────────────
+
+function createContext(pluginId, grantedPermissions) {
+    function requirePermission(needed) {
+        if (!checkPermission(grantedPermissions, needed)) {
+            throw new PermissionError(pluginId, needed);
+        }
+    }
 
     return {
         // Identity
@@ -944,27 +1033,113 @@ function createContext() {
 
         // Service provider/consumer
         provide(key, val) {
+            requirePermission('ctx.provide');
             services.set(key, val);
         },
         use(key) {
             if (!services.has(key)) {
                 throw new Error(
-                    `[plugin] Service "${key}" not found. ` +
+                    `[plugin:${pluginId}] Service "${key}" not found. ` +
                     `Is the providing plugin listed as a dependency and loaded first?`
                 );
             }
             return services.get(key);
         },
 
-        // WS integration
+        // WS integration (always allowed)
         onMessage(type, handler) { wsHandlers.set(type, handler); },
-        reply:     send,
-        broadcast,
+        reply: send,
 
-        // Introspection
+        // Broadcast (permission-gated)
+        broadcast(obj) {
+            requirePermission('ctx.broadcast');
+            broadcast(obj);
+        },
+
+        // Introspection (always allowed)
         loadedPlugins() { return Object.assign({}, loadedPlugins); },
+
+        // ── Permission-gated file system ─────────────────────────────────
+        readFile(filePath) {
+            const resolved = path.resolve(filePath);
+            requirePermission(`fs.read:${resolved}`);
+            return fs.readFileSync(resolved, 'utf8');
+        },
+
+        readFileBuffer(filePath) {
+            const resolved = path.resolve(filePath);
+            requirePermission(`fs.read:${resolved}`);
+            return fs.readFileSync(resolved);
+        },
+
+        writeFile(filePath, data) {
+            const resolved = path.resolve(filePath);
+            requirePermission(`fs.write:${resolved}`);
+            fs.writeFileSync(resolved, data);
+        },
+
+        existsSync(filePath) {
+            const resolved = path.resolve(filePath);
+            requirePermission(`fs.read:${resolved}`);
+            return fs.existsSync(resolved);
+        },
+
+        readDir(dirPath) {
+            const resolved = path.resolve(dirPath);
+            requirePermission(`fs.read:${resolved}`);
+            return fs.readdirSync(resolved);
+        },
+
+        // ── Permission-gated network ─────────────────────────────────────
+        listen(port, handler) {
+            requirePermission(`net.listen:${port}`);
+            const srv = http.createServer(handler);
+            srv.listen(port, '127.0.0.1');
+            return srv;
+        },
+
+        fetch(url, options) {
+            const parsed = new URL(url);
+            requirePermission(`net.connect:${parsed.hostname}`);
+            // Use Node.js built-in fetch if available, otherwise http/https
+            if (typeof globalThis.fetch === 'function') {
+                return globalThis.fetch(url, options);
+            }
+            const mod = parsed.protocol === 'https:' ? require('https') : require('http');
+            return new Promise((resolve, reject) => {
+                mod.get(url, options || {}, res => {
+                    let data = '';
+                    res.on('data', chunk => data += chunk);
+                    res.on('end', () => resolve({ ok: res.statusCode < 400, status: res.statusCode, text: () => Promise.resolve(data), json: () => Promise.resolve(JSON.parse(data)) }));
+                }).on('error', reject);
+            });
+        },
+
+        // ── Permission-gated system exec ─────────────────────────────────
+        exec(command, args) {
+            const cmd = typeof command === 'string' ? command.split(/\s+/)[0] : command;
+            requirePermission(`system.exec:${cmd}`);
+            const { execSync } = require('child_process');
+            const fullCmd = args ? `${command} ${args.join(' ')}` : command;
+            return execSync(fullCmd, { encoding: 'utf8' });
+        },
+
+        execAsync(command, args) {
+            const cmd = typeof command === 'string' ? command.split(/\s+/)[0] : command;
+            requirePermission(`system.exec:${cmd}`);
+            const { exec } = require('child_process');
+            const fullCmd = args ? `${command} ${args.join(' ')}` : command;
+            return new Promise((resolve, reject) => {
+                exec(fullCmd, (err, stdout, stderr) => {
+                    if (err) reject(err);
+                    else resolve({ stdout, stderr });
+                });
+            });
+        },
     };
 }
+
+// ── Plugin loader ────────────────────────────────────────────────────────────
 
 function loadPlugins() {
     if (!fs.existsSync(pluginsDir)) {
@@ -983,8 +1158,6 @@ function loadPlugins() {
         return a.localeCompare(b);
     });
 
-    const ctx = createContext();
-
     for (const name of entries) {
         const dir          = path.join(pluginsDir, name);
         const manifestPath = path.join(dir, 'plugin.json');
@@ -998,15 +1171,31 @@ function loadPlugins() {
             continue;
         }
 
+        // Read and validate permissions
+        const rawPerms = manifest.permissions || [];
+        const expanded = expandPermissions(rawPerms, dataDir);
+        const invalid  = validatePermissions(expanded);
+        if (invalid.length > 0) {
+            console.warn(`[plugin] "${name}" has unrecognized permissions: ${invalid.join(', ')}`);
+        }
+
+        const pluginId = manifest.id || name;
+
         try {
+            const ctx    = createContext(pluginId, expanded);
             const plugin = require(path.join(dir, manifest.main || 'index.js'));
             if (typeof plugin.install === 'function') plugin.install(ctx);
-            loadedPlugins[manifest.id || name] = {
+            loadedPlugins[pluginId] = {
                 name:    manifest.name    || name,
                 version: manifest.version || '0.0.0',
             };
+            console.log(`[plugin] loaded "${pluginId}" with permissions: [${expanded.join(', ')}]`);
         } catch (e) {
-            console.error(`[plugin] failed to load "${name}": ${e.message}`);
+            if (e instanceof PermissionError) {
+                console.error(`[plugin] permission denied for "${name}": ${e.message}`);
+            } else {
+                console.error(`[plugin] failed to load "${name}": ${e.message}`);
+            }
         }
     }
 
@@ -1039,6 +1228,15 @@ function handleMessage(socket, ip, raw) {
                 plugins: readPluginsJson(),
             });
             break;
+        case 'install-package': {
+            // Package install request from the web UI
+            const plugins = msg.plugins || [];
+            const packageId = msg.packageId || 'unknown';
+            console.log(`[ws] install-package request: ${packageId} -> [${plugins.join(', ')}]`);
+            // Placeholder: actual package installation logic would go here
+            send(socket, { type: 'install-package:ack', packageId, plugins, status: 'received' });
+            break;
+        }
         default: {
             const handler = wsHandlers.get(msg.type);
             if (handler) handler(socket, msg);
@@ -1102,6 +1300,134 @@ server.listen(PORT, '127.0.0.1', () => {
 
 $FILE_DATA_SRC_APP_PY = @'
 print('Hello World - Python component!')
+'@
+
+$FILE_DATA_SRC_PERMISSIONS_JS = @'
+'use strict';
+
+// ── Permission Taxonomy ──────────────────────────────────────────────────────
+//
+// Format: category.action           (wildcard - grants all scopes)
+//         category.action:scope     (scoped - grants only matching scope)
+//
+// Categories:
+//   fs.read            Read any file
+//   fs.read:<path>     Read files under a specific path
+//   fs.write           Write any file
+//   fs.write:<path>    Write files under a specific path
+//   net.listen         Listen on any port
+//   net.listen:<port>  Listen on a specific port
+//   net.connect        Make outbound connections to any host
+//   net.connect:<host> Connect to a specific host
+//   system.exec        Execute any child process
+//   system.exec:<cmd>  Execute a specific command
+//   ctx.provide        Register services for other plugins
+//   ctx.broadcast      Broadcast messages to all WS clients
+
+const PERMISSION_CATEGORIES = [
+    'fs.read',
+    'fs.write',
+    'net.listen',
+    'net.connect',
+    'system.exec',
+    'ctx.provide',
+    'ctx.broadcast',
+];
+
+const PERMISSION_DESCRIPTIONS = {
+    'fs.read':        'Read files from your computer',
+    'fs.write':       'Write files to your computer',
+    'net.listen':     'Start a local server',
+    'net.connect':    'Connect to the internet',
+    'system.exec':    'Run system commands',
+    'ctx.provide':    'Provide services to other plugins',
+    'ctx.broadcast':  'Send messages to all connected clients',
+};
+
+class PermissionError extends Error {
+    constructor(pluginId, needed) {
+        super(`Plugin "${pluginId}" requires permission "${needed}" but was not granted it.`);
+        this.name = 'PermissionError';
+        this.pluginId = pluginId;
+        this.permission = needed;
+    }
+}
+
+/**
+ * Parse a permission string into its components.
+ * "fs.read:/some/path" -> { base: "fs.read", scope: "/some/path" }
+ * "ctx.provide"        -> { base: "ctx.provide", scope: null }
+ */
+function parsePermission(str) {
+    const colonIdx = str.indexOf(':');
+    // Check if colon is after the category.action part (not within it)
+    // e.g. "fs.read" has no colon, "fs.read:/path" has colon as scope separator
+    // but "ctx.provide" should not split on any colon
+    const parts = str.split(':');
+    const base = parts[0];
+    const scope = parts.length > 1 ? parts.slice(1).join(':') : null;
+    return { base, scope };
+}
+
+/**
+ * Check if a specific permission is granted by the granted list.
+ * Supports wildcard: "fs.read" (no scope) grants "fs.read:/any/path".
+ * Supports path matching: "fs.write:/data" grants "fs.write:/data/config.json".
+ */
+function checkPermission(grantedList, needed) {
+    const { base: neededBase, scope: neededScope } = parsePermission(needed);
+
+    for (const granted of grantedList) {
+        const { base: grantedBase, scope: grantedScope } = parsePermission(granted);
+
+        if (grantedBase !== neededBase) continue;
+
+        // Wildcard: granted has no scope -> grants everything under this category
+        if (grantedScope === null) return true;
+
+        // Exact match
+        if (neededScope === null) continue; // needed is wildcard but granted is scoped -> no match
+        if (neededScope === grantedScope) return true;
+
+        // Path prefix match: granted "/data" matches needed "/data/config.json"
+        if (neededScope.startsWith(grantedScope + '/')) return true;
+        if (neededScope.startsWith(grantedScope + '\\')) return true;
+    }
+
+    return false;
+}
+
+/**
+ * Validate that all permissions in a list are recognized categories.
+ * Returns array of unrecognized permissions (empty if all valid).
+ */
+function validatePermissions(permissions) {
+    const invalid = [];
+    for (const perm of permissions) {
+        const { base } = parsePermission(perm);
+        if (!PERMISSION_CATEGORIES.includes(base)) {
+            invalid.push(perm);
+        }
+    }
+    return invalid;
+}
+
+/**
+ * Expand ${dataDir} tokens in permission scopes.
+ */
+function expandPermissions(permissions, dataDir) {
+    return permissions.map(p => p.replace(/\$\{dataDir\}/g, dataDir));
+}
+
+module.exports = {
+    PERMISSION_CATEGORIES,
+    PERMISSION_DESCRIPTIONS,
+    PermissionError,
+    parsePermission,
+    checkPermission,
+    validatePermissions,
+    expandPermissions,
+};
 '@
 
 $FILE_LICENSE_TXT = @'
@@ -1205,6 +1531,7 @@ $FILE_MANIFEST = [ordered]@{
     'data/plugins.json' = $FILE_DATA_PLUGINS_JSON
     'data/src/app.js' = $FILE_DATA_SRC_APP_JS
     'data/src/app.py' = $FILE_DATA_SRC_APP_PY
+    'data/src/permissions.js' = $FILE_DATA_SRC_PERMISSIONS_JS
     'LICENSE.txt' = $FILE_LICENSE_TXT
 }
 
@@ -1212,7 +1539,6 @@ $FILE_MANIFEST = [ordered]@{
 $FILE_DATA_PLUGINS_CORE_INDEX_JS = @'
 'use strict';
 const EventEmitter = require('events');
-const fs           = require('fs');
 const path         = require('path');
 
 // ── EventBus ──────────────────────────────────────────────────────────────────
@@ -1220,14 +1546,15 @@ class EventBus extends EventEmitter {}
 
 // ── Config ────────────────────────────────────────────────────────────────────
 class Config {
-    constructor(dataDir) {
-        this._file = path.join(dataDir, 'config.json');
+    constructor(ctx) {
+        this._ctx  = ctx;
+        this._file = path.join(ctx.dataDir, 'config.json');
         this._data = {};
         this._load();
     }
 
     _load() {
-        try { this._data = JSON.parse(fs.readFileSync(this._file, 'utf8')); }
+        try { this._data = JSON.parse(this._ctx.readFile(this._file)); }
         catch (_) { this._data = {}; }
     }
 
@@ -1237,7 +1564,7 @@ class Config {
 
     set(key, val) {
         this._data[key] = val;
-        try { fs.writeFileSync(this._file, JSON.stringify(this._data, null, 2)); }
+        try { this._ctx.writeFile(this._file, JSON.stringify(this._data, null, 2)); }
         catch (e) { console.error(`[core] config write failed: ${e.message}`); }
     }
 
@@ -1257,7 +1584,7 @@ function makeLogger(events) {
 module.exports = {
     install(ctx) {
         const bus    = new EventBus();
-        const config = new Config(ctx.dataDir);
+        const config = new Config(ctx);
         const log    = makeLogger(bus);
 
         ctx.provide('events', bus);
@@ -1276,7 +1603,12 @@ $FILE_DATA_PLUGINS_CORE_PLUGIN_JSON = @'
   "version": "1.0.0",
   "description": "Core plugin - event bus, persistent config, logger",
   "main": "index.js",
-  "dependencies": {}
+  "dependencies": {},
+  "permissions": [
+    "fs.read:${dataDir}",
+    "fs.write:${dataDir}",
+    "ctx.provide"
+  ]
 }
 '@
 
@@ -1656,14 +1988,15 @@ $FILE_DATA_PLUGINS_SETTINGS_PLUGIN_JSON = @'
   "dependencies": {
     "core": "*",
     "ui": "*"
-  }
+  },
+  "permissions": [
+    "ctx.broadcast"
+  ]
 }
 '@
 
 $FILE_DATA_PLUGINS_UI_INDEX_JS = @'
 'use strict';
-const http = require('http');
-const fs   = require('fs');
 const path = require('path');
 const url  = require('url');
 
@@ -1680,11 +2013,11 @@ const MIME = {
     '.svg':  'image/svg+xml',
 };
 
-function serveFile(res, filePath) {
+function serveFile(ctx, res, filePath) {
     try {
         const ext  = path.extname(filePath).toLowerCase();
         const mime = MIME[ext] || 'text/plain';
-        const data = fs.readFileSync(filePath);
+        const data = ctx.readFileBuffer(filePath);
         res.writeHead(200, { 'Content-Type': mime });
         res.end(data);
     } catch (_) {
@@ -1738,13 +2071,12 @@ module.exports = {
 
         // Service: open a panel in the default browser
         ctx.provide('ui.openPanel', (id = '') => {
-            const { exec } = require('child_process');
             const target = `http://127.0.0.1:${port}/${id}`;
-            exec(`start "" "${target}"`);
+            ctx.execAsync(`start "" "${target}"`);
             log(`ui: opened panel "${id}" -> ${target}`);
         });
 
-        const server = http.createServer((req, res) => {
+        const server = ctx.listen(port, (req, res) => {
             res.setHeader('Access-Control-Allow-Origin', '*');
 
             const parsed  = url.parse(req.url || '/');
@@ -1763,14 +2095,14 @@ module.exports = {
                 const panel = panels.get(panelId);
                 if (panel) {
                     const asset = path.join(path.dirname(panel.htmlPath), subPath);
-                    serveFile(res, asset);
+                    serveFile(ctx, res, asset);
                     return;
                 }
             }
 
             // Panel HTML
             if (panels.has(panelId)) {
-                serveFile(res, panels.get(panelId).htmlPath);
+                serveFile(ctx, res, panels.get(panelId).htmlPath);
                 return;
             }
 
@@ -1780,10 +2112,8 @@ module.exports = {
 
         server.on('error', err => log(`ui: server error - ${err.message}`, 'ERROR'));
 
-        server.listen(port, '127.0.0.1', () => {
-            log(`ui: panel server -> http://127.0.0.1:${port}`);
-            events.emit('ui:ready', { port });
-        });
+        log(`ui: panel server -> http://127.0.0.1:${port}`);
+        events.emit('ui:ready', { port });
 
         log(`ui plugin loaded`);
     }
@@ -1799,7 +2129,13 @@ $FILE_DATA_PLUGINS_UI_PLUGIN_JSON = @'
   "main": "index.js",
   "dependencies": {
     "core": "*"
-  }
+  },
+  "permissions": [
+    "net.listen:53421",
+    "fs.read",
+    "ctx.provide",
+    "system.exec:start"
+  ]
 }
 '@
 
