@@ -3609,6 +3609,10 @@ public class ShellNotify {
                $protoKey = "HKCU:\SOFTWARE\Classes\$APP_NAME_LOW"
                New-Item -Path $protoKey -Value "URL:$APP_NAME Protocol" -Force | Out-Null
                New-ItemProperty -Path $protoKey -Name "URL Protocol" -Value "" -PropertyType String -Force | Out-Null
+               # Friendly name shown in protocol confirmation dialogs (when respected by the browser)
+               New-Item -Path "$protoKey\Application" -Force | Out-Null
+               New-ItemProperty -Path "$protoKey\Application" -Name "ApplicationName" -Value $APP_NAME -PropertyType String -Force | Out-Null
+               New-ItemProperty -Path "$protoKey\Application" -Name "ApplicationDescription" -Value "$APP_NAME Protocol Handler" -PropertyType String -Force | Out-Null
                $cmd = "wscript.exe `"$lib\router.vbs`" `"%1`""
                New-Item -Path "$protoKey\shell\open\command" -Value $cmd -Force | Out-Null
            }},
