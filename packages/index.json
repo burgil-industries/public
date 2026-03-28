@@ -2,10 +2,10 @@
   "packages": [
     {
       "id": "essentials",
-      "name": "ALI Essentials",
+      "name": "COMPUTER Essentials",
       "version": "1.0.0",
-      "description": "The core foundation every ALI installation needs. Includes the event bus, configuration system, UI panel server, and settings management.",
-      "author": "ALI Systems",
+      "description": "The core foundation every COMPUTER installation needs. Includes the event bus, configuration system, UI panel server, and settings management.",
+      "author": "COMPUTER Systems",
       "icon": "box",
       "plugins": ["core", "ui", "settings"],
       "tags": ["core", "official", "recommended"]
@@ -14,7 +14,7 @@
       "id": "developer-tools",
       "name": "Developer Tools Pack",
       "version": "1.0.0",
-      "description": "Everything you need to build, debug, and test ALI plugins. Includes the dev bridge with hot-reload and debugging tools.",
+      "description": "Everything you need to build, debug, and test COMPUTER plugins. Includes the dev bridge with hot-reload and debugging tools.",
       "author": "Community Labs",
       "icon": "code",
       "plugins": ["core", "dev-bridge"],

@@ -15,7 +15,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 # 2. Setup a temporary environment
-TMP_DIR="/tmp/ali_setup_env"
+TMP_DIR="/tmp/computer_setup_env"
 mkdir -p "$TMP_DIR"
 cd "$TMP_DIR"
 
@@ -37,14 +37,14 @@ ctk.set_default_color_theme("blue")
 
 app = ctk.CTk()
 app.geometry("540x400")
-app.title("ALI 1.0.0 Setup")
+app.title("COMPUTER 1.0.0 Setup")
 
 # Title Label
-title = ctk.CTkLabel(app, text="Welcome to ALI Setup", font=("Segoe UI", 24, "bold"))
+title = ctk.CTkLabel(app, text="Welcome to COMPUTER Setup", font=("Segoe UI", 24, "bold"))
 title.pack(pady=20)
 
 # Path Input
-path_var = ctk.StringVar(value=os.path.expanduser("~/.local/ALI"))
+path_var = ctk.StringVar(value=os.path.expanduser("~/.local/COMPUTER"))
 path_entry = ctk.CTkEntry(app, textvariable=path_var, width=300)
 path_entry.pack(pady=20)
 

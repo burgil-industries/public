@@ -1,11 +1,55 @@
-$APP_NAME      = "ALI"
+# ==============================================================================
+# Burgil Industries - C.O.M.P.U.T.E.R. Protocol Bootstrapper
+# ==============================================================================
+
+$APP_NAME      = "C.O.M.P.U.T.E.R."
 $APP_NAME_LOW  = $APP_NAME.ToLower()
 $APP_VERSION   = "1.0.0"
+
+# --- Credits splash + relaunch as hidden process ----------------------------
+# First run: show credits for 3 s, then re-exec hidden so only the WinForms
+# window appears in the taskbar.  Second run (HEADLESS=1): skip straight through.
+if (-not $env:COMPUTER_SETUP_HEADLESS) {
+    $env:COMPUTER_SETUP_HEADLESS = "1"
+
+    # Launch the hidden installer immediately so it loads while credits are shown
+    $tmp = "$env:TEMP\computer_setup_launch.ps1"
+    if ($PSCommandPath) {
+        Copy-Item $PSCommandPath $tmp -Force -ErrorAction SilentlyContinue
+    } else {
+        [System.IO.File]::WriteAllText($tmp,
+            $MyInvocation.MyCommand.ScriptBlock.ToString(),
+            [System.Text.Encoding]::UTF8)
+    }
+    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$tmp`""
+
+    # --- ASCII art (visible in the console while installer loads) ------
+    Clear-Host
+    Write-Host "   ___ ___  __  __ ___ _   _ _____ ___ ___ " -ForegroundColor Cyan
+    Write-Host "  / __/ _ \|  \/  | _ \ | | |_   _| __| _ \" -ForegroundColor Cyan
+    Write-Host " | (_| (_) | |\/| |  _/ |_| | | | | _||   /" -ForegroundColor Cyan
+    Write-Host "  \___\___/|_|  |_|_|  \___/  |_| |___|_|_\ " -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host " COMPLETELY OPEN MODULAR PROGRAM UNDER TRUSTED EXECUTION RULES" -ForegroundColor Green
+    Write-Host " (c) 2026 Burgil Industries | computer.burgil.dev" -ForegroundColor DarkGray
+    $spin = @('/', '-', '\', '-')
+    try { [Console]::CursorVisible = $false } catch {}
+    for ($p = 0; $p -le 40; $p++) {
+        $bar = ('=' * $p).PadRight(40)
+        $pct = [int]($p / 40 * 100)
+        Write-Host "`r  Setup Wizard Loading...  [$bar] $pct%  $($spin[$p % 4])" -NoNewline -ForegroundColor Green
+        Start-Sleep -Milliseconds 75
+    }
+    Write-Host "`r  Setup Wizard Loading...  [$('=' * 40)] 100%   " -ForegroundColor Green
+    Write-Host ""
+    exit
+}
+$env:COMPUTER_SETUP_HEADLESS = ""   # reset for future runs in this session
 $ICON_URL      = "http://localhost:3000/favicon.ico"
 $UPDATE_URL    = "http://localhost:3000/updates"
 $AD_URL        = "http://localhost:3000/ads/softwisor.com.png"   # URL to a 480x82 banner image - leave empty to show placeholder
 $AD_LINK       = "https://softwisor.com/"   # URL opened when the banner is clicked - leave empty to disable
-$CONTACT_US    = "https://closed-ali.com/contact"              # shown in the ad placeholder "Contact us" line
+$CONTACT_US    = "https://computer.burgil.dev/contact"              # shown in the ad placeholder "Contact us" line
 
 $MIN_PYTHON = "3.8"
 $MIN_NODE   = "20.0"
@@ -26,20 +70,19 @@ function Write-Log {
 ("=" * 60) | Add-Content -Path $script:_logPath -Encoding UTF8
 Write-Log "$APP_NAME $APP_VERSION  launched"
 
-# --- Hide the PowerShell console immediately -------
 if (-not ([System.Management.Automation.PSTypeName]'ConsoleUtils.Window').Type) {
     Add-Type -Name Window -Namespace ConsoleUtils -MemberDefinition @"
 [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
-[DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+[DllImport("user32.dll")]   public static extern bool   ShowWindow(IntPtr hWnd, int nCmdShow);
+[DllImport("user32.dll")]   public static extern int    GetWindowLong(IntPtr hWnd, int nIndex);
+[DllImport("user32.dll")]   public static extern int    SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+[DllImport("user32.dll", SetLastError=true)]
+public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 "@
 }
-$null = [ConsoleUtils.Window]::ShowWindow([ConsoleUtils.Window]::GetConsoleWindow(), 0)
-
-# Prevent Ctrl+C from firing a break signal into the WinForms message loop.
-# The console is hidden so this has no user-visible effect, but without it a
-# Ctrl+C in the launching terminal can interrupt timer callbacks mid-execution
-# and crash with "You cannot call a method on a null-valued expression".
 try { [Console]::TreatControlCAsInput = $true } catch {}
+
+# (consent is handled by the wizard's License and Legal Notices pages)
 
 # --- Single-instance check (named mutex) -----------
 $script:_mutex = New-Object System.Threading.Mutex($false, "Global\$($APP_NAME)_Setup_Mutex")
@@ -55,17 +98,15 @@ if (-not $script:_mutex.WaitOne(0, $false)) {
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-# --- Icon: download to temp, shown in installer window, copied to install dir -
-$script:iconTemp   = "$env:TEMP\$($APP_NAME_LOW)_setup.ico"
-$script:iconObject = $null   # System.Drawing.Icon  - for the form title bar (requires real .ico)
-$script:iconImage  = $null   # System.Drawing.Image - for PictureBox (accepts PNG, ICO, anything)
+# --- Icon: download to temp, shown in installer window header PictureBox -----
+$script:iconTemp  = "$env:TEMP\$($APP_NAME_LOW)_setup.ico"
+$script:iconImage = $null   # System.Drawing.Image - for PictureBox (accepts PNG, ICO, anything)
 
 if ($ICON_URL) {
     try {
         if (Test-Path $script:iconTemp) { Remove-Item $script:iconTemp -Force -ErrorAction SilentlyContinue }
         (New-Object System.Net.WebClient).DownloadFile($ICON_URL, $script:iconTemp)
         $script:iconImage = [System.Drawing.Image]::FromFile($script:iconTemp)
-        try { $script:iconObject = New-Object System.Drawing.Icon($script:iconTemp) } catch { }
     } catch {
         Write-Log "Icon download failed: $_" "ERROR"
         [System.Windows.Forms.MessageBox]::Show(
@@ -516,7 +557,7 @@ try {
     switch ($host_) {
 
         'install' {
-            # ali://install/PLUGIN_ID?version=1.0.0&deps=dep1,dep2&permissions=fs.read,net.connect
+            # computer://install/PLUGIN_ID?version=1.0.0&deps=dep1,dep2&permissions=fs.read,net.connect
             $pluginId = $path_
             $version  = $query['version']
             $deps     = $query['deps']
@@ -560,7 +601,7 @@ try {
         }
 
         'install-package' {
-            # ali://install-package/PACKAGE_ID?plugins=core,ui,settings
+            # computer://install-package/PACKAGE_ID?plugins=core,ui,settings
             $packageId = $path_
             $pluginsList = $query['plugins']
 
@@ -639,7 +680,7 @@ If WScript.Arguments.Count > 0 Then
     Dim scriptDir, sh
     scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
     Set sh = CreateObject("WScript.Shell")
-    sh.Run "wscript.exe """ & scriptDir & "router.vbs"" ""ali://open?path=" & WScript.Arguments(0) & """", 0, False
+    sh.Run "wscript.exe """ & scriptDir & "router.vbs"" ""computer://open?path=" & WScript.Arguments(0) & """", 0, False
 End If
 '@
 
@@ -1431,14 +1472,14 @@ module.exports = {
 '@
 
 $FILE_LICENSE_TXT = @'
-ALI Source License 1.0
-Copyright (c) 2026 ALI
+COMPUTER Source License 1.0
+Copyright (c) 2026 COMPUTER
 
 TERMS AND CONDITIONS
 
 1. DEFINITIONS
 
-"Software" means ALI and all associated source code, documentation, and
+"Software" means COMPUTER and all associated source code, documentation, and
 configuration files distributed under this license.
 
 "Plugin" means a separate work designed to extend or integrate with the
@@ -2149,6 +2190,21 @@ $FILE_MANIFEST['data/plugins/settings/plugin.json'] = $FILE_DATA_PLUGINS_SETTING
 $FILE_MANIFEST['data/plugins/ui/index.js'] = $FILE_DATA_PLUGINS_UI_INDEX_JS
 $FILE_MANIFEST['data/plugins/ui/plugin.json'] = $FILE_DATA_PLUGINS_UI_PLUGIN_JSON
 
+# --- RichTextBox styled append ----------------------
+function RTB-Write {
+    param(
+        [System.Windows.Forms.RichTextBox]$RTB,
+        [string]$Text,
+        [System.Drawing.Color]$Color,
+        [switch]$Bold,
+        [float]$Size = 8.5
+    )
+    $RTB.SelectionFont  = New-Object System.Drawing.Font("Segoe UI", $Size,
+        $(if ($Bold) { [System.Drawing.FontStyle]::Bold } else { [System.Drawing.FontStyle]::Regular }))
+    $RTB.SelectionColor = $Color
+    $RTB.AppendText($Text)
+}
+
 # --- Encoding-safe file writer ----------------------
 function Write-File {
     param([string]$Path, [string]$Content, [switch]$Ascii)
@@ -2306,27 +2362,33 @@ $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox     = $false
 $form.MinimizeBox     = $false
 $form.BackColor       = $C_BG
-if ($script:iconObject) { $form.Icon = $script:iconObject }
 
-$form.Add_Load({ [DarkMode]::Enable($form.Handle) })
+$form.Add_Load({
+    # Remove WS_EX_APPWINDOW (0x40000) from the console and hide it — this strips
+    # the taskbar entry and hides the window at the exact moment the form appears.
+    $hCon = [ConsoleUtils.Window]::GetConsoleWindow()
+    if ($hCon -ne [IntPtr]::Zero) {
+        $ex = [ConsoleUtils.Window]::GetWindowLong($hCon, -20)           # GWL_EXSTYLE
+        [ConsoleUtils.Window]::SetWindowLong($hCon, -20,
+            ($ex -band (-bnot 0x40000)) -bor 0x80) | Out-Null            # remove APPWINDOW, add TOOLWINDOW
+        [ConsoleUtils.Window]::ShowWindow($hCon, 0) | Out-Null           # SW_HIDE
+    }
+
+    [DarkMode]::Enable($form.Handle)
+})
 
 $form.Add_FormClosing({
     param($s, $e)
-    if ($script:idx -eq 5) { $e.Cancel = $true; return }   # block close during installation
+    if ($script:idx -eq 6) { $e.Cancel = $true; return }   # block close during installation
     if ($script:skipCloseConfirm) { return }               # after uninstall, allow closing
     if ($pgReinstall.Visible -or $pgUpdate.Visible) { return }  # maintenance pages - no confirmation
-    if ($script:idx -lt 6) {
+    if ($script:idx -lt 7) {
         $r = Show-Dialog "Cancel Setup" "Are you sure you want to cancel the installation?" @("Yes", "No")
         if ($r -ne "Yes") { $e.Cancel = $true }
     }
 })
 
 $form.Add_FormClosed({
-    if ($script:iconObject) {
-        $form.Icon = $null
-        $script:iconObject.Dispose()
-        $script:iconObject = $null
-    }
     if ($script:iconImage) {
         $script:iconImage.Dispose()
         $script:iconImage = $null
@@ -2423,11 +2485,27 @@ $pgWelcome.Controls.AddRange(@(
     (New-Label "This wizard will guide you through installing $APP_NAME" 30 112 480 20 10 Regular $C_TEXT),
     (New-Label "on your computer." 30 134 480 20 10 Regular $C_TEXT),
     (New-Label "Click Next to begin." 30 172 480 20 10 Regular $C_DIM),
-    (New-Label "Creator"        30  218  68 18 9 Bold    $C_DIM),
-    (New-Label "Wizard Burgil 42" 104 218 200 18 9 Regular $C_ACCENT),
-    (New-Label "License"        312 218  52 18 9 Bold    $C_DIM),
-    (New-Label "$APP_NAME Source License" 370 218 160 18 9 Regular $C_DIM)
+    (New-Label "Creator" 30  218  68 18 9 Bold $C_DIM),
+    (New-Label "GitHub"  312 218  52 18 9 Bold $C_DIM)
 ))
+
+function New-WelcomeLink($text, $url, $x, $y, $w) {
+    $lnk                  = New-Object System.Windows.Forms.LinkLabel
+    $lnk.Text             = $text
+    $lnk.Location         = New-Object System.Drawing.Point($x, $y)
+    $lnk.Size             = New-Object System.Drawing.Size($w, 18)
+    $lnk.Font             = New-Object System.Drawing.Font("Segoe UI", 9)
+    $lnk.LinkColor        = $C_ACCENT
+    $lnk.ActiveLinkColor  = [System.Drawing.Color]::White
+    $lnk.VisitedLinkColor = $C_ACCENT
+    $lnk.BackColor        = [System.Drawing.Color]::Transparent
+    $lnk.Cursor           = [System.Windows.Forms.Cursors]::Hand
+    $lnk.Add_LinkClicked({ Start-Process $url }.GetNewClosure())
+    return $lnk
+}
+
+$pgWelcome.Controls.Add((New-WelcomeLink "Wizard Burgil 42" "https://github.com/burgil"            104 218 200))
+$pgWelcome.Controls.Add((New-WelcomeLink "Burgil Industries"   "https://github.com/burgil-industries"  370 218 160))
 # =============================================================================
 # PAGE 1 - LICENSE
 # =============================================================================
@@ -2441,19 +2519,59 @@ $licBox.ReadOnly    = $true
 $licBox.BackColor   = $C_INPUT
 $licBox.ForeColor   = $C_TEXT
 $licBox.BorderStyle = "FixedSingle"
-$licBox.Font        = New-Object System.Drawing.Font("Consolas", 8)
-$licBox.Text        = $FILE_LICENSE_TXT
+$licBox.Font        = New-Object System.Drawing.Font("Segoe UI", 8.5)
+$licBox.ScrollBars  = "Vertical"
+$licBox.DetectUrls  = $false
+
+RTB-Write $licBox "COMPUTER Source License 1.0`n"   $C_ACCENT -Bold -Size 9
+RTB-Write $licBox "Copyright (c) 2026 COMPUTER`n`n" $C_DIM   -Size 8
+
+RTB-Write $licBox "TERMS AND CONDITIONS`n`n" $C_TEXT -Bold
+
+RTB-Write $licBox "1. DEFINITIONS`n" $C_ACCENT -Bold
+RTB-Write $licBox "`"Software`" means COMPUTER and all associated source code, documentation, and`nconfiguration files distributed under this license.`n`n" $C_TEXT
+RTB-Write $licBox "`"Plugin`" means a separate work designed to extend or integrate with the`nSoftware, which does not replicate the Software's core functionality and`ndepends on the Software to operate.`n`n" $C_TEXT
+RTB-Write $licBox "`"Competing Product`" means any product, service, or software whose primary`npurpose substantially replicates or replaces the core functionality of the`nSoftware, regardless of whether it is based on this source code.`n`n" $C_TEXT
+
+RTB-Write $licBox "2. GRANT OF RIGHTS`n" $C_SUCCESS -Bold
+RTB-Write $licBox "Subject to the conditions below, you are granted a worldwide, royalty-free,`nnon-exclusive license to:`n`n" $C_TEXT
+RTB-Write $licBox "a) Use, run, and inspect the Software for any personal or internal purpose.`n" $C_TEXT
+RTB-Write $licBox "b) Modify the Software for personal or internal use.`n" $C_TEXT
+RTB-Write $licBox "c) Create, use, modify, and distribute Plugins for the Software.`n" $C_TEXT
+RTB-Write $licBox "d) Incorporate third-party code into Plugins, provided the license of that`n   third-party code permits such use.`n`n" $C_TEXT
+
+RTB-Write $licBox "3. RESTRICTIONS`n" $C_DANGER -Bold
+RTB-Write $licBox "a) You may not use, distribute, or incorporate this Software, in whole or`n   in part, to build, market, or operate a Competing Product.`n`n" $C_TEXT
+RTB-Write $licBox "b) You may not redistribute the Software itself (not as a Plugin) without`n   prior written permission from the copyright holder.`n`n" $C_TEXT
+RTB-Write $licBox "c) You may not remove or alter any copyright, license, or attribution`n   notices present in the Software.`n`n" $C_TEXT
+
+RTB-Write $licBox "4. PROHIBITED USES`n" $C_DANGER -Bold
+RTB-Write $licBox "You may not use the Software:`n`n" $C_TEXT
+RTB-Write $licBox "a) For any purpose that is unlawful, harmful, abusive, threatening,`n   harassing, defamatory, or otherwise objectionable.`n`n" $C_TEXT
+RTB-Write $licBox "b) To facilitate or participate in any illegal activity, including but not`n   limited to fraud, malware distribution, unauthorized access to systems,`n   or violation of any applicable law or regulation.`n`n" $C_TEXT
+RTB-Write $licBox "c) In any manner that could damage, disable, overburden, or impair the`n   Software or its associated infrastructure.`n`n" $C_TEXT
+
+RTB-Write $licBox "5. REGIONAL COMPLIANCE`n" ([System.Drawing.Color]::FromArgb(255, 200, 60)) -Bold
+RTB-Write $licBox "You are solely responsible for determining whether your use of the Software`nis lawful in your jurisdiction. The authors make no representation that the`nSoftware is appropriate or available for use in any specific location. If`naccess to or use of the Software is prohibited by the laws of your region,`nyou must not use it. Proceeding with installation or use constitutes your`nconfirmation that such use is permitted under the laws applicable to you.`n`n" $C_TEXT
+
+RTB-Write $licBox "6. PLUGINS`n" $C_ACCENT -Bold
+RTB-Write $licBox "Plugins you create are your own work. This license places no restrictions`non the license you choose for your Plugins, provided the Plugin does not`nitself constitute a Competing Product.`n`n" $C_TEXT
+
+RTB-Write $licBox "7. DISCLAIMER - USE AT YOUR OWN RISK`n" ([System.Drawing.Color]::FromArgb(255, 200, 60)) -Bold
+RTB-Write $licBox "THE SOFTWARE IS PROVIDED " $C_DIM
+RTB-Write $licBox "`"AS IS`""                 $C_DANGER -Bold
+RTB-Write $licBox ", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR`nIMPLIED. YOU USE THIS SOFTWARE ENTIRELY AT YOUR OWN RISK.`n`n" $C_DIM
+RTB-Write $licBox "THE AUTHORS AND COPYRIGHT HOLDERS EXPRESSLY DISCLAIM ALL WARRANTIES,`nINCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A`nPARTICULAR PURPOSE, ACCURACY, AND NONINFRINGEMENT.`n`n" $C_DIM
+RTB-Write $licBox "IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY DIRECT,`nINDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES`n(INCLUDING BUT NOT LIMITED TO LOSS OF DATA, LOSS OF PROFITS, BUSINESS`nINTERRUPTION, OR ANY OTHER LOSS) ARISING OUT OF OR IN CONNECTION WITH THE`nUSE OR INABILITY TO USE THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY`nOF SUCH DAMAGES.`n" $C_DIM
+
 $pgLicense.Controls.Add($licBox)
 
 # --- 4-column summary grid ---
 # Columns: [CAN 1 x=30] [CAN 2 x=152] | [CANT 1 x=276] [CANT 2 x=396]
 
-$chk = [char]0x2713   # checkmark
-$xmk = [char]0x2717   # ballot X
-
 # Section headers
-$pgLicense.Controls.Add((New-Label "$chk  YOU CAN"    30  162 238 15 8 Bold $C_SUCCESS))
-$pgLicense.Controls.Add((New-Label "$xmk  YOU CANNOT" 276 162 238 15 8 Bold $C_DANGER))
+$pgLicense.Controls.Add((New-Label "[+]  YOU CAN"    30  162 238 15 8 Bold $C_SUCCESS))
+$pgLicense.Controls.Add((New-Label "[x]  YOU CANNOT" 276 162 238 15 8 Bold $C_DANGER))
 
 # Vertical divider
 $licDiv           = New-Object System.Windows.Forms.Panel
@@ -2473,28 +2591,27 @@ function New-LicItem([string]$t, [int]$x, [int]$y, [System.Drawing.Color]$c, [st
 
 # CAN DO - col 1 (x=30) and col 2 (x=152)
 $pgLicense.Controls.AddRange(@(
-    (New-LicItem "$chk Personal use"      30  181 $C_SUCCESS "Use $APP_NAME freely for personal projects, learning, and experimentation"),
-    (New-LicItem "$chk Build plugins"    152  181 $C_SUCCESS "Create extensions and integrations that work with and depend on $APP_NAME"),
-    (New-LicItem "$chk Modify source"     30  198 $C_SUCCESS "Edit the source code to suit your personal or internal needs"),
-    (New-LicItem "$chk Share plugins"    152  198 $C_SUCCESS "Distribute your plugins to others under any license you choose"),
-    (New-LicItem "$chk Run internally"    30  215 $C_SUCCESS "Deploy $APP_NAME within your organization for internal business use"),
-    (New-LicItem "$chk Use licensed code" 152 215 $C_SUCCESS "Incorporate third-party libraries in your plugins if their license permits")
+    (New-LicItem "[+] Personal use"      30  181 $C_SUCCESS "Use $APP_NAME freely for personal projects, learning, and experimentation"),
+    (New-LicItem "[+] Build plugins"    152  181 $C_SUCCESS "Create extensions and integrations that work with and depend on $APP_NAME"),
+    (New-LicItem "[+] Modify source"     30  198 $C_SUCCESS "Edit the source code to suit your personal or internal needs"),
+    (New-LicItem "[+] Share plugins"    152  198 $C_SUCCESS "Distribute your plugins to others under any license you choose"),
+    (New-LicItem "[+] Run internally"    30  215 $C_SUCCESS "Deploy $APP_NAME within your organization for internal business use"),
+    (New-LicItem "[+] Use licensed code" 152 215 $C_SUCCESS "Incorporate third-party libraries in your plugins if their license permits")
 ))
 
 # CANNOT - col 3 (x=276) and col 4 (x=396)
 $pgLicense.Controls.AddRange(@(
-    (New-LicItem "$xmk Compete with $APP_NAME"    276 181 $C_DANGER "Do not build a product whose primary purpose overlaps with $APP_NAME's core functionality"),
-    (New-LicItem "$xmk Violate local laws"  396 181 $C_DANGER "You must verify that using $APP_NAME is legal in your country or region before installing"),
-    (New-LicItem "$xmk Redistribute $APP_NAME"    276 198 $C_DANGER "Do not package or distribute $APP_NAME itself without prior written permission from the authors"),
-    (New-LicItem "$xmk Illegal/harmful use" 396 198 $C_DANGER "Do not use $APP_NAME for fraud, malware, unauthorized system access, or any harmful activity"),
-    (New-LicItem "$xmk Remove notices"      276 215 $C_DANGER "Do not remove or alter any copyright, license, or attribution notices in the source"),
-    (New-LicItem "$xmk Hold liable"         396 215 $C_DANGER "Authors are not liable for any damages - you use this software entirely at your own risk")
+    (New-LicItem "[x] Compete with us"     276 181 $C_DANGER "Do not build a product whose primary purpose overlaps with $APP_NAME's core functionality"),
+    (New-LicItem "[x] Violate local laws"  396 181 $C_DANGER "You must verify that using $APP_NAME is legal in your country or region before installing"),
+    (New-LicItem "[x] Redistribute it"    276 198 $C_DANGER "Do not package or distribute $APP_NAME itself without prior written permission from the authors"),
+    (New-LicItem "[x] Illegal/harmful use" 396 198 $C_DANGER "Do not use $APP_NAME for fraud, malware, unauthorized system access, or any harmful activity"),
+    (New-LicItem "[x] Remove notices"      276 215 $C_DANGER "Do not remove or alter any copyright, license, or attribution notices in the source"),
+    (New-LicItem "[x] Hold liable"         396 215 $C_DANGER "Authors are not liable for any damages - you use this software entirely at your own risk")
 ))
 
 # --- Disclaimer note ---
-$warn = [char]0x26A0
 $licWarn           = New-Object System.Windows.Forms.Label
-$licWarn.Text      = "$warn  Used at your own risk - no warranty, no liability for any damages or losses. You are solely responsible for ensuring use is legal in your region."
+$licWarn.Text      = "[!]  Used at your own risk - no warranty, no liability for any damages or losses. You are solely responsible for ensuring use is legal in your region."
 $licWarn.Location  = New-Object System.Drawing.Point(30, 247)
 $licWarn.Size      = New-Object System.Drawing.Size(480, 30)
 $licWarn.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
@@ -2515,6 +2632,166 @@ $chkLicense.Add_CheckedChanged({
     if ($chkLicense.Checked) { Write-Log "License accepted" }
 })
 $pgLicense.Controls.Add($chkLicense)
+# =============================================================================
+# PAGE 2 - LEGAL NOTICES
+# =============================================================================
+$pgLegal = New-Page
+$pgLegal.Controls.Add((New-Label "Legal Notices" 30 18 480 22 13 Bold $C_TEXT))
+
+$legalBox             = New-Object System.Windows.Forms.RichTextBox
+$legalBox.Location    = New-Object System.Drawing.Point(30, 44)
+$legalBox.Size        = New-Object System.Drawing.Size(480, 210)
+$legalBox.ReadOnly    = $true
+$legalBox.BackColor   = $C_INPUT
+$legalBox.ForeColor   = $C_TEXT
+$legalBox.BorderStyle = "FixedSingle"
+$legalBox.Font        = New-Object System.Drawing.Font("Segoe UI", 8.5)
+$legalBox.ScrollBars  = "Vertical"
+$legalBox.DetectUrls  = $false
+$pgLegal.Controls.Add($legalBox)
+
+$C_AMBER  = [System.Drawing.Color]::FromArgb(255, 200, 60)
+$C_ORANGE = [System.Drawing.Color]::FromArgb(255, 140, 0)
+$C_VIOLET = [System.Drawing.Color]::FromArgb(188, 140, 255)
+
+# --- Quick-reference summary (mirrors bootstrap terminal) ---
+RTB-Write $legalBox "  WARNING: EXPERIMENTAL ALPHA SOFTWARE`n"  $C_DANGER -Bold -Size 10
+RTB-Write $legalBox "  By continuing you enter a legally binding agreement:`n`n" $C_DIM
+
+RTB-Write $legalBox "  1. " $C_ACCENT -Bold
+RTB-Write $legalBox "AGE REQUIREMENT         " $C_AMBER -Bold
+RTB-Write $legalBox "You must be 18 or older to use this software.`n" $C_TEXT
+
+RTB-Write $legalBox "  2. " $C_ACCENT -Bold
+RTB-Write $legalBox "LIMITATION OF LIABILITY " $C_DANGER -Bold
+RTB-Write $legalBox "No liability for damage, data loss, or harm.`n" $C_TEXT
+
+RTB-Write $legalBox "  3. " $C_ACCENT -Bold
+RTB-Write $legalBox "NO WARRANTIES           " $C_DANGER -Bold
+RTB-Write $legalBox "Provided AS IS. No guarantees of any kind.`n" $C_TEXT
+
+RTB-Write $legalBox "  4. " $C_ACCENT -Bold
+RTB-Write $legalBox "BINDING ARBITRATION     " $C_DANGER -Bold
+RTB-Write $legalBox "No jury trial or class-action. Individual arbitration.`n" $C_TEXT
+
+RTB-Write $legalBox "  5. " $C_ACCENT -Bold
+RTB-Write $legalBox "THIRD-PARTY MODULES     " $C_ORANGE -Bold
+RTB-Write $legalBox "Third-party plugins are not reviewed by the author.`n" $C_TEXT
+
+RTB-Write $legalBox "  6. " $C_ACCENT -Bold
+RTB-Write $legalBox "LOCAL DATA PROCESSING   " $C_ACCENT -Bold
+RTB-Write $legalBox "No data is collected or transmitted by the author.`n" $C_TEXT
+
+RTB-Write $legalBox "  7. " $C_ACCENT -Bold
+RTB-Write $legalBox "AI TRANSPARENCY         " $C_VIOLET -Bold
+RTB-Write $legalBox "Local AI runs on-machine. Cloud providers governed by their own terms.`n" $C_TEXT
+
+RTB-Write $legalBox "  8. " $C_ACCENT -Bold
+RTB-Write $legalBox "GRACE PERIOD            " $C_SUCCESS -Bold
+RTB-Write $legalBox "Contact legal@burgil.dev before taking legal action.`n" $C_TEXT
+
+RTB-Write $legalBox "`n  --------------------------------------------------------`n`n" $C_BORDER
+
+# --- Open Source & Fully Auditable ---
+RTB-Write $legalBox "  Open Source and Fully Auditable`n"       $C_SUCCESS -Bold -Size 9.5
+RTB-Write $legalBox "  This installer and "                     $C_TEXT
+RTB-Write $legalBox "every component"                           $C_SUCCESS -Bold
+RTB-Write $legalBox " is fully open source. You can read, audit,`n  and verify " $C_TEXT
+RTB-Write $legalBox "every single line"                         $C_SUCCESS -Bold
+RTB-Write $legalBox " before anything runs on your machine.`n"  $C_TEXT
+RTB-Write $legalBox "  Source: "                                $C_DIM
+RTB-Write $legalBox "computer.burgil.dev`n`n"                   $C_ACCENT -Bold
+
+# --- Age Requirement ---
+RTB-Write $legalBox "  Age Requirement`n"                       $C_AMBER -Bold -Size 9.5
+RTB-Write $legalBox "  You must be "                            $C_TEXT
+RTB-Write $legalBox "18 years of age or older"                  $C_AMBER -Bold
+RTB-Write $legalBox " to use this software.`n"                  $C_TEXT
+RTB-Write $legalBox "  Minors must not proceed.`n`n"            $C_DIM
+
+# --- No Warranties / Liability ---
+RTB-Write $legalBox "  No Warranties / Limitation of Liability`n" $C_DANGER -Bold -Size 9.5
+RTB-Write $legalBox "  Provided "                               $C_TEXT
+RTB-Write $legalBox "`"AS IS`""                                 $C_DANGER -Bold
+RTB-Write $legalBox " without warranty of any kind. The author accepts "  $C_TEXT
+RTB-Write $legalBox "no liability`n  "                          $C_DANGER -Bold
+RTB-Write $legalBox "for damage, data loss, system failure, or harm. "    $C_TEXT
+RTB-Write $legalBox "You assume all risk.`n`n"                  $C_DIM
+
+# --- Binding Arbitration ---
+RTB-Write $legalBox "  Binding Arbitration`n"                   $C_DANGER -Bold -Size 9.5
+RTB-Write $legalBox "  By continuing, you waive your right to a " $C_TEXT
+RTB-Write $legalBox "jury trial"                                $C_DANGER -Bold
+RTB-Write $legalBox " and "                                     $C_TEXT
+RTB-Write $legalBox "class-action lawsuits`n"                   $C_DANGER -Bold
+RTB-Write $legalBox "  Disputes are resolved by "               $C_TEXT
+RTB-Write $legalBox "individual arbitration at your expense`n`n" $C_DANGER -Bold
+
+# --- Third-Party Plugins ---
+RTB-Write $legalBox "  Third-Party Plugins`n"                   $C_ORANGE -Bold -Size 9.5
+RTB-Write $legalBox "  Plugins from third parties are "         $C_TEXT
+RTB-Write $legalBox "not reviewed"                              $C_ORANGE -Bold
+RTB-Write $legalBox " by the author.`n"                         $C_TEXT
+RTB-Write $legalBox "  Install them at your own risk. Report violations: " $C_TEXT
+RTB-Write $legalBox "legal@burgil.dev`n`n"                      $C_ACCENT
+
+# --- Privacy ---
+RTB-Write $legalBox "  Privacy`n"                               $C_ACCENT -Bold -Size 9.5
+RTB-Write $legalBox "  All core processing runs "               $C_TEXT
+RTB-Write $legalBox "on your machine"                           $C_ACCENT -Bold
+RTB-Write $legalBox ". The author does "                        $C_TEXT
+RTB-Write $legalBox "not"                                       $C_ACCENT -Bold
+RTB-Write $legalBox " collect or`n  transmit your data. "       $C_TEXT
+RTB-Write $legalBox "Plugins"                                   $C_ORANGE -Bold
+RTB-Write $legalBox " connecting to the internet are governed by their own terms.`n`n" $C_TEXT
+
+# --- AI Components ---
+RTB-Write $legalBox "  AI Components`n"                         $C_VIOLET -Bold -Size 9.5
+RTB-Write $legalBox "  Local AI components (models, agents, tools) run " $C_TEXT
+RTB-Write $legalBox "entirely on your machine`n"                $C_VIOLET -Bold
+RTB-Write $legalBox "  Cloud LLM providers "                    $C_TEXT
+RTB-Write $legalBox "(e.g. NVIDIA NIM, any OpenAI-compatible API)" $C_DIM
+RTB-Write $legalBox " are`n  user-configured and governed by "  $C_TEXT
+RTB-Write $legalBox "their own terms of service`n`n"            $C_VIOLET -Bold
+
+# --- Grace Period ---
+RTB-Write $legalBox "  Grace Period`n"                          $C_SUCCESS -Bold -Size 9.5
+RTB-Write $legalBox "  Contact "                                $C_TEXT
+RTB-Write $legalBox "legal@burgil.dev"                          $C_ACCENT -Bold
+RTB-Write $legalBox " before initiating any legal proceedings.`n" $C_TEXT
+RTB-Write $legalBox "  The author commits to acting in "        $C_TEXT
+RTB-Write $legalBox "good faith"                                $C_SUCCESS -Bold
+RTB-Write $legalBox " to resolve valid concerns within 72 hours.`n" $C_TEXT
+
+$legalBox.SelectionStart = 0
+
+# --- Age confirmation checkbox ---
+$chkAge           = New-Object System.Windows.Forms.CheckBox
+$chkAge.Text      = "I confirm I am 18 years of age or older"
+$chkAge.Location  = New-Object System.Drawing.Point(30, 262)
+$chkAge.Size      = New-Object System.Drawing.Size(480, 20)
+$chkAge.Font      = New-Object System.Drawing.Font("Segoe UI", 9)
+$chkAge.ForeColor = $C_TEXT
+$chkAge.BackColor = $C_BG
+$chkAge.Add_CheckedChanged({
+    $btnNext.Enabled = $chkAge.Checked -and $chkLegal.Checked
+    if ($chkAge.Checked) { Write-Log "Age requirement confirmed" }
+})
+$pgLegal.Controls.Add($chkAge)
+
+# --- Legal acceptance checkbox ---
+$chkLegal           = New-Object System.Windows.Forms.CheckBox
+$chkLegal.Text      = "I acknowledge and accept the above legal terms"
+$chkLegal.Location  = New-Object System.Drawing.Point(30, 284)
+$chkLegal.Size      = New-Object System.Drawing.Size(480, 20)
+$chkLegal.Font      = New-Object System.Drawing.Font("Segoe UI", 9)
+$chkLegal.ForeColor = $C_TEXT
+$chkLegal.BackColor = $C_BG
+$chkLegal.Add_CheckedChanged({
+    $btnNext.Enabled = $chkAge.Checked -and $chkLegal.Checked
+    if ($chkLegal.Checked) { Write-Log "Legal terms accepted" }
+})
+$pgLegal.Controls.Add($chkLegal)
 # =============================================================================
 # PAGE 2 - DEPENDENCIES
 # =============================================================================
@@ -2561,29 +2838,29 @@ function Start-DepCheck {
 function Update-DepStatus {
     # Each Invoke-Async call pumps DoEvents - a Back/Next click can fire mid-run.
     # Guard every state change so navigating away doesn't corrupt the new page.
-    if ($script:idx -ne 2) { return }
+    if ($script:idx -ne 3) { return }
 
     # - Python: existence -
     $hasPy = [bool]((Invoke-Async 'where.exe' 'python').Trim())
-    if ($script:idx -ne 2) { return }
+    if ($script:idx -ne 3) { return }
     if ($hasPy) { $lblPyStatus.Text = "Detected..."; $lblPyStatus.ForeColor = $C_SUCCESS }
     else        { $lblPyStatus.Text = "Not found";   $lblPyStatus.ForeColor = $C_DANGER; $btnGetPy.Visible = $true }
 
     # - Node: existence ---
     $hasNode = [bool]((Invoke-Async 'where.exe' 'node').Trim())
-    if ($script:idx -ne 2) { return }
+    if ($script:idx -ne 3) { return }
     if ($hasNode) { $lblNodeStatus.Text = "Detected..."; $lblNodeStatus.ForeColor = $C_SUCCESS }
     else          { $lblNodeStatus.Text = "Not found";   $lblNodeStatus.ForeColor = $C_DANGER; $btnGetNode.Visible = $true }
 
     # - Python version, then pip appended ----------
     if ($hasPy) {
         $raw   = Invoke-Async 'python' '--version'
-        if ($script:idx -ne 2) { return }
+        if ($script:idx -ne 3) { return }
         $pyVer = if ($raw -match 'Python\s+(\S+)') { $Matches[1] } else { $raw }
         $lblPyStatus.Text = if ($pyVer) { $pyVer } else { "Detected" }
 
         $raw    = Invoke-Async 'pip' '--version'
-        if ($script:idx -ne 2) { return }
+        if ($script:idx -ne 3) { return }
         $pipVer = if ($raw -match '^pip\s+(\S+)') { $Matches[1] } else { '' }
         if ($pipVer) { $lblPyStatus.Text = "$pyVer  /  pip $pipVer" }
     }
@@ -2591,12 +2868,12 @@ function Update-DepStatus {
     # - Node version, then npm appended ------------
     if ($hasNode) {
         $raw     = Invoke-Async 'node' '--version'
-        if ($script:idx -ne 2) { return }
+        if ($script:idx -ne 3) { return }
         $nodeVer = if ($raw -match 'v?(\d[\d.]*)') { $Matches[1] } else { $raw }
         $lblNodeStatus.Text = if ($nodeVer) { "v$nodeVer" } else { "Detected" }
 
         $raw    = Invoke-Async 'npm' '--version'
-        if ($script:idx -ne 2) { return }
+        if ($script:idx -ne 3) { return }
         $npmVer = if ($raw -match '^\d') { ($raw -split '\r?\n')[0].Trim() } else { '' }
         if ($npmVer) { $lblNodeStatus.Text = "v$nodeVer  /  npm $npmVer" }
     }
@@ -2605,7 +2882,7 @@ function Update-DepStatus {
     Write-Log ("Dep check done - python={0} node={1}" -f $lblPyStatus.Text, $lblNodeStatus.Text)
     if (-not $hasPy)   { Write-Log "Python not found" "WARN" }
     if (-not $hasNode) { Write-Log "Node.js not found" "WARN" }
-    if ($script:idx -eq 2) { $btnNext.Enabled = $hasPy -and $hasNode }
+    if ($script:idx -eq 3) { $btnNext.Enabled = $hasPy -and $hasNode }
 }
 
 $btnRecheck.Add_Click({ Write-Log "Dep recheck requested"; Start-DepCheck })
@@ -2621,7 +2898,7 @@ $txtDir             = New-Object System.Windows.Forms.TextBox
 $txtDir.Location    = New-Object System.Drawing.Point(30, 82)
 $txtDir.Size        = New-Object System.Drawing.Size(368, 26)
 $txtDir.Font        = New-Object System.Drawing.Font("Segoe UI", 10)
-$txtDir.Text        = "$env:LOCALAPPDATA\Programs\$APP_NAME"
+$txtDir.Text        = "$env:LOCALAPPDATA\Programs\$APP_NAME".TrimEnd('.')
 $txtDir.BackColor   = $C_INPUT
 $txtDir.ForeColor   = $C_TEXT
 $txtDir.BorderStyle = "FixedSingle"
@@ -2705,8 +2982,8 @@ $chkSendTo    = New-OptChk "Add to Send To menu"     240  2
 $chkAddPath   = New-OptChk "Add to Path"             0   24
 $chkStartMenu = New-OptChk "Start Menu shortcut"     240 24
 $chkOpenWith  = New-OptChk "Right-click menu"        0   46
-$chkFileAssoc = New-OptChk "File type (.ali)"        240 46
-$chkNewMenu   = New-OptChk "New menu (.ali)"         240 68
+$chkFileAssoc = New-OptChk "File type (.computer)"        240 46
+$chkNewMenu   = New-OptChk "New menu (.computer)"         240 68
 
 $pnlAdvanced.Controls.AddRange(@($chkStartup, $chkSendTo, $chkAddPath, $chkStartMenu, $chkOpenWith, $chkFileAssoc, $chkNewMenu))
 
@@ -2734,24 +3011,24 @@ $optTip.SetToolTip($chkSendTo,    "Add 'Send to $APP_NAME' to the right-click Se
 $optTip.SetToolTip($chkAddPath,   "Add $APP_NAME to PATH so you can run '$APP_NAME_LOW' from any terminal")
 $optTip.SetToolTip($chkStartMenu, "Create a $APP_NAME shortcut in the Windows Start Menu")
 $optTip.SetToolTip($chkOpenWith,  "Add 'Open with $APP_NAME' to the right-click menu for files and folders")
-$optTip.SetToolTip($chkFileAssoc, "Open .ali files with $APP_NAME on double-click")
-$optTip.SetToolTip($chkNewMenu,   "Add 'New > $APP_NAME File (.ali)' to the right-click New submenu (requires File type)")
+$optTip.SetToolTip($chkFileAssoc, "Open .computer files with $APP_NAME on double-click")
+$optTip.SetToolTip($chkNewMenu,   "Add 'New > $APP_NAME File (.computer)' to the right-click New submenu (requires File type)")
 
-# Warning strip shown when ALI is already running
-$pnlAliRunning           = New-Object System.Windows.Forms.Panel
-$pnlAliRunning.Location  = New-Object System.Drawing.Point(30, 342)
-$pnlAliRunning.Size      = New-Object System.Drawing.Size(480, 26)
-$pnlAliRunning.BackColor = [System.Drawing.Color]::FromArgb(60, 40, 0)
-$pnlAliRunning.Visible   = $false
+# Warning strip shown when COMPUTER is already running
+$pnlComputerRunning           = New-Object System.Windows.Forms.Panel
+$pnlComputerRunning.Location  = New-Object System.Drawing.Point(30, 342)
+$pnlComputerRunning.Size      = New-Object System.Drawing.Size(480, 26)
+$pnlComputerRunning.BackColor = [System.Drawing.Color]::FromArgb(60, 40, 0)
+$pnlComputerRunning.Visible   = $false
 
-$lblAliRunningTxt           = New-Object System.Windows.Forms.Label
-$lblAliRunningTxt.Text      = "[!]  $APP_NAME is currently running - click Install to close it automatically"
-$lblAliRunningTxt.Location  = New-Object System.Drawing.Point(8, 4)
-$lblAliRunningTxt.Size      = New-Object System.Drawing.Size(464, 18)
-$lblAliRunningTxt.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
-$lblAliRunningTxt.ForeColor = [System.Drawing.Color]::FromArgb(255, 180, 60)
-$lblAliRunningTxt.BackColor = [System.Drawing.Color]::Transparent
-$pnlAliRunning.Controls.Add($lblAliRunningTxt)
+$lblComputerRunningTxt           = New-Object System.Windows.Forms.Label
+$lblComputerRunningTxt.Text      = "[!]  $APP_NAME is currently running - click Install to close it automatically"
+$lblComputerRunningTxt.Location  = New-Object System.Drawing.Point(8, 4)
+$lblComputerRunningTxt.Size      = New-Object System.Drawing.Size(464, 18)
+$lblComputerRunningTxt.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
+$lblComputerRunningTxt.ForeColor = [System.Drawing.Color]::FromArgb(255, 180, 60)
+$lblComputerRunningTxt.BackColor = [System.Drawing.Color]::Transparent
+$pnlComputerRunning.Controls.Add($lblComputerRunningTxt)
 
 $pgConfirm.Controls.AddRange(@(
     $lblConfAppL, $lblConfAppV, $lblConfDirL, $lblConfDirV,
@@ -2759,7 +3036,7 @@ $pgConfirm.Controls.AddRange(@(
     $lblConfUninL, $lblConfUninV,
     $confirmSep,
     $btnAdvToggle, $pnlAdvanced,
-    $pnlAliRunning
+    $pnlComputerRunning
 ))
 # =============================================================================
 # PAGE 5 - INSTALLING
@@ -2910,7 +3187,7 @@ $script:_recheckTimer = $null
 
 function Check-ForUpdate {
     Write-Log "Check-ForUpdate: $UPDATE_URL/latest.json  (installed: $script:existingVersion)"
-    $pnlReinstAliRunning.Visible = Test-AliRunning
+    $pnlReinstComputerRunning.Visible = Test-ComputerRunning
     $lblUpdateStatus.Text      = "Checking for updates..."
     $lblUpdateStatus.ForeColor = $C_DIM
     [System.Windows.Forms.Application]::DoEvents()
@@ -2982,12 +3259,12 @@ $btnRecheck.Add_Click({
 
 $btnRepair.Add_Click({
     Write-Log "Repair/reinstall selected"
-    if (Test-AliRunning) {
+    if (Test-ComputerRunning) {
         $choice = Show-Dialog "$APP_NAME is Running" "$APP_NAME is currently running in the background.`nPlease close it before repairing." @("Close $APP_NAME", "Cancel")
         if ($choice -eq "Close $APP_NAME") {
-            Stop-AliProcess
+            Stop-ComputerProcess
             Start-Sleep -Milliseconds 800
-            if (Test-AliRunning) {
+            if (Test-ComputerRunning) {
                 Show-Dialog "Could Not Close $APP_NAME" "$APP_NAME is still running. Please close it manually and try again." @("OK")
                 return
             }
@@ -3005,12 +3282,12 @@ $btnRepair.Add_Click({
 
 $btnUninstReinst.Add_Click({
     Write-Log "Uninstall selected from maintenance page"
-    if (Test-AliRunning) {
+    if (Test-ComputerRunning) {
         $choice = Show-Dialog "$APP_NAME is Running" "$APP_NAME is currently running in the background.`nPlease close it before uninstalling." @("Close $APP_NAME", "Cancel")
         if ($choice -eq "Close $APP_NAME") {
-            Stop-AliProcess
+            Stop-ComputerProcess
             Start-Sleep -Milliseconds 800
-            if (Test-AliRunning) {
+            if (Test-ComputerRunning) {
                 Show-Dialog "Could Not Close $APP_NAME" "$APP_NAME is still running. Please close it manually and try again." @("OK")
                 return
             }
@@ -3026,7 +3303,7 @@ $btnUninstReinst.Add_Click({
     $btnRepair.Visible        = $false
     $btnUninstReinst.Visible  = $false
     $btnReinstClose.Visible   = $false
-    $pnlReinstAliRunning.Visible = $false
+    $pnlReinstComputerRunning.Visible = $false
     $pbUninst.Value   = 0
     $pbUninst.Visible = $true
     [System.Windows.Forms.Application]::DoEvents()
@@ -3132,26 +3409,26 @@ $pbUninst.Minimum  = 0
 $pbUninst.Maximum  = 100
 $pbUninst.Visible  = $false
 
-# Warning strip shown when ALI is already running
-$pnlReinstAliRunning           = New-Object System.Windows.Forms.Panel
-$pnlReinstAliRunning.Location  = New-Object System.Drawing.Point(30, 200)
-$pnlReinstAliRunning.Size      = New-Object System.Drawing.Size(390, 26)
-$pnlReinstAliRunning.BackColor = [System.Drawing.Color]::FromArgb(60, 40, 0)
-$pnlReinstAliRunning.Visible   = $false
+# Warning strip shown when COMPUTER is already running
+$pnlReinstComputerRunning           = New-Object System.Windows.Forms.Panel
+$pnlReinstComputerRunning.Location  = New-Object System.Drawing.Point(30, 200)
+$pnlReinstComputerRunning.Size      = New-Object System.Drawing.Size(390, 26)
+$pnlReinstComputerRunning.BackColor = [System.Drawing.Color]::FromArgb(60, 40, 0)
+$pnlReinstComputerRunning.Visible   = $false
 
-$lblReinstAliRunningTxt           = New-Object System.Windows.Forms.Label
-$lblReinstAliRunningTxt.Text      = "[!]  $APP_NAME is currently running - close it before continuing"
-$lblReinstAliRunningTxt.Location  = New-Object System.Drawing.Point(8, 4)
-$lblReinstAliRunningTxt.Size      = New-Object System.Drawing.Size(374, 18)
-$lblReinstAliRunningTxt.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
-$lblReinstAliRunningTxt.ForeColor = [System.Drawing.Color]::FromArgb(255, 180, 60)
-$lblReinstAliRunningTxt.BackColor = [System.Drawing.Color]::Transparent
-$pnlReinstAliRunning.Controls.Add($lblReinstAliRunningTxt)
+$lblReinstComputerRunningTxt           = New-Object System.Windows.Forms.Label
+$lblReinstComputerRunningTxt.Text      = "[!]  $APP_NAME is currently running - close it before continuing"
+$lblReinstComputerRunningTxt.Location  = New-Object System.Drawing.Point(8, 4)
+$lblReinstComputerRunningTxt.Size      = New-Object System.Drawing.Size(374, 18)
+$lblReinstComputerRunningTxt.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
+$lblReinstComputerRunningTxt.ForeColor = [System.Drawing.Color]::FromArgb(255, 180, 60)
+$lblReinstComputerRunningTxt.BackColor = [System.Drawing.Color]::Transparent
+$pnlReinstComputerRunning.Controls.Add($lblReinstComputerRunningTxt)
 
 $pgReinstall.Controls.AddRange(@(
     $lblReinstTitle, $lblReinstPath, $lblUpdateStatus, $btnRecheck,
     $btnReinstOpen, $btnRepair, $btnUninstReinst, $btnReinstClose,
-    $pbUninst, $pnlReinstAliRunning
+    $pbUninst, $pnlReinstComputerRunning
 ))
 # =============================================================================
 # UPDATE PAGE (shown when a newer version is found)
@@ -3239,12 +3516,12 @@ function Show-UpdatePage {
 }
 
 $btnApplyUpdate.Add_Click({
-    if (Test-AliRunning) {
+    if (Test-ComputerRunning) {
         $choice = Show-Dialog "$APP_NAME is Running" "$APP_NAME is currently running in the background.`nPlease close it before updating." @("Close $APP_NAME", "Cancel")
         if ($choice -eq "Close $APP_NAME") {
-            Stop-AliProcess
+            Stop-ComputerProcess
             Start-Sleep -Milliseconds 800
-            if (Test-AliRunning) {
+            if (Test-ComputerRunning) {
                 Show-Dialog "Could Not Close $APP_NAME" "$APP_NAME is still running. Please close it manually and try again." @("OK")
                 return
             }
@@ -3346,7 +3623,7 @@ $btnSkipUpdate.Add_Click({
     Write-Log "Update skipped by user"
     $pgUpdate.Visible    = $false
     $pgReinstall.Visible = $true
-    $pnlReinstAliRunning.Visible = Test-AliRunning
+    $pnlReinstComputerRunning.Visible = Test-ComputerRunning
     $lblSubtitle.Text    = "Maintenance"
     $form.ClientSize     = New-Object System.Drawing.Size(540, 320)
     $lblUpdateStatus.Text      = "Update skipped"
@@ -3366,13 +3643,13 @@ $pgUpdate.Controls.AddRange(@(
     $btnApplyUpdate, $btnSkipUpdate, $btnUpdateClose
 ))
 # --- Page list ------------
-$allPages  = @($pgWelcome, $pgLicense, $pgDeps, $pgLocation, $pgConfirm, $pgInstall, $pgDone)
-$pageNames = @("Welcome", "License Agreement", "Requirements", "Install Location", "Ready to Install", "Installing...", "Installation Complete")
+$allPages  = @($pgWelcome, $pgLicense, $pgLegal, $pgDeps, $pgLocation, $pgConfirm, $pgInstall, $pgDone)
+$pageNames = @("Welcome", "License Agreement", "Legal Notices", "Requirements", "Install Location", "Ready to Install", "Installing...", "Installation Complete")
 $script:idx = 0
 $script:skipCloseConfirm = $false
 # --- Install helpers ------
 
-function Test-AliRunning {
+function Test-ComputerRunning {
     # IPGlobalProperties is pure .NET - no module load, runs in <5ms
     try {
         $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
@@ -3382,7 +3659,7 @@ function Test-AliRunning {
 
 $script:_safeProcNames = @('explorer','svchost','services','lsass','winlogon','csrss','smss','wininit','System','wscript','powershell','pwsh')
 
-function Stop-AliProcess {
+function Stop-ComputerProcess {
     # Collect all unique PIDs that own any TCP connection on port 53420
     $pids = @(Get-NetTCPConnection -LocalPort 53420 -ErrorAction SilentlyContinue |
               Select-Object -ExpandProperty OwningProcess -Unique)
@@ -3391,13 +3668,13 @@ function Stop-AliProcess {
         $wmi = Get-CimInstance Win32_Process -Filter "ProcessId=$pid1" -ErrorAction SilentlyContinue
         # Kill the node/python process holding the port
         Stop-Process -Id $pid1 -Force -ErrorAction SilentlyContinue
-        Write-Log "Stop-AliProcess: killed PID $pid1 ($($wmi.Name))"
+        Write-Log "Stop-ComputerProcess: killed PID $pid1 ($($wmi.Name))"
         # Kill its parent (the cmd.exe hosting __APP_NAME__.cmd) if it is safe to do so
         if ($wmi -and $wmi.ParentProcessId -gt 0) {
             $parentProc = Get-Process -Id $wmi.ParentProcessId -ErrorAction SilentlyContinue
             if ($parentProc -and $parentProc.ProcessName -notin $script:_safeProcNames) {
                 Stop-Process -Id $wmi.ParentProcessId -Force -ErrorAction SilentlyContinue
-                Write-Log "Stop-AliProcess: killed parent PID $($wmi.ParentProcessId) ($($parentProc.ProcessName))"
+                Write-Log "Stop-ComputerProcess: killed parent PID $($wmi.ParentProcessId) ($($parentProc.ProcessName))"
             }
         }
     }
@@ -3443,7 +3720,7 @@ function Remove-ExistingInstall {
     if (Test-Path $updLink)     { Remove-Item $updLink     -Force -ErrorAction SilentlyContinue }
 
     # - 2. Flush Explorer shell cache AFTER registry keys are gone ------------
-    #    This makes Explorer release icon handles for .ali files and the folder
+    #    This makes Explorer release icon handles for .computer files and the folder
     if (-not ([System.Management.Automation.PSTypeName]'ShellNotify').Type) {
         Add-Type @"
 using System;
@@ -3478,7 +3755,7 @@ public class ShellNotify {
 }
 # --- Installation ---------
 function Start-Installation {
-    $dir    = $txtDir.Text
+    $dir    = $txtDir.Text.TrimEnd('.')
     $data   = "$dir\data"
     $lib    = "$data\lib"
     $assets = "$data\assets"
@@ -3510,7 +3787,7 @@ public class ShellNotify {
 
         @{ Pct = 15; Msg = "Copying icon...";
            Action = {
-               if ($script:iconObject -and (Test-Path $script:iconTemp)) {
+               if (Test-Path $script:iconTemp) {
                    Copy-Item $script:iconTemp "$assets\$APP_NAME_LOW.ico" -Force
                }
            }},
@@ -3815,7 +4092,10 @@ public class ShellNotify {
         } catch {
             Write-Log ("[{0}pct] FAILED: {1}" -f $step.Pct, $_) "ERROR"
             Show-Dialog "$APP_NAME Setup" "An error occurred:`n$_" @("OK")
+            $script:idx        = 5   # leave install page visible but unblock FormClosing
+            $btnBack.Enabled   = $true
             $btnCancel.Enabled = $true
+            $btnNext.Enabled   = $false
             return
         }
         Start-Sleep -Milliseconds 280
@@ -3823,7 +4103,7 @@ public class ShellNotify {
     }
     Write-Log "Installation complete"
 
-    Show-Page 6
+    Show-Page 7
 }
 # --- Navigation -----------
 function Show-Page([int]$n) {
@@ -3846,21 +4126,22 @@ function Show-Page([int]$n) {
     switch ($n) {
         0 { $btnBack.Enabled = ($null -ne $script:existingInstallDir) }
         1 { $btnNext.Enabled = $chkLicense.Checked }
-        2 { Start-DepCheck }
-        4 {
+        2 { $btnNext.Enabled = $chkAge.Checked -and $chkLegal.Checked }
+        3 { Start-DepCheck }
+        5 {
             $btnNext.Text     = "Install"
             $lblConfDirV.Text = $txtDir.Text
             $lblConfScV.Text  = if ($chkShortcut.Checked) { "Yes" } else { "No" }
-            $pnlAliRunning.Visible = $false
+            $pnlComputerRunning.Visible = $false
             # Defer the port check so the page paints before we query the network stack
-            if ($script:_aliCheckTimer) { $script:_aliCheckTimer.Stop() }
-            $script:_aliCheckTimer = New-Object System.Windows.Forms.Timer
-            $script:_aliCheckTimer.Interval = 80
-            $script:_aliCheckTimer.Add_Tick({
-                $script:_aliCheckTimer.Stop()
-                $pnlAliRunning.Visible = Test-AliRunning
+            if ($script:_computerCheckTimer) { $script:_computerCheckTimer.Stop() }
+            $script:_computerCheckTimer = New-Object System.Windows.Forms.Timer
+            $script:_computerCheckTimer.Interval = 80
+            $script:_computerCheckTimer.Add_Tick({
+                $script:_computerCheckTimer.Stop()
+                $pnlComputerRunning.Visible = Test-ComputerRunning
             })
-            $script:_aliCheckTimer.Start()
+            $script:_computerCheckTimer.Start()
             # Fresh install: all checked by default; repair: reflect current registered state
             if ($script:existingInstallDir) {
                 $chkStartup.Checked   = Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\$APP_NAME.lnk"
@@ -3884,20 +4165,20 @@ function Show-Page([int]$n) {
                 $chkNewMenu.Enabled   = $true
             }
         }
-        5 {
-            if (Test-AliRunning) {
+        6 {
+            if (Test-ComputerRunning) {
                 $choice = Show-Dialog "$APP_NAME is Running" "$APP_NAME is currently running in the background.`nPlease close it before installing." @("Close $APP_NAME", "Cancel")
                 if ($choice -eq "Close $APP_NAME") {
-                    Stop-AliProcess
+                    Stop-ComputerProcess
                     Start-Sleep -Milliseconds 800
-                    if (Test-AliRunning) {
+                    if (Test-ComputerRunning) {
                         Show-Dialog "Could Not Close $APP_NAME" "$APP_NAME is still running. Please close it manually and try again." @("OK")
-                        Show-Page 4
+                        Show-Page 5
                         return
                     }
                     # Successfully closed - fall through to install
                 } else {
-                    Show-Page 4
+                    Show-Page 5
                     return
                 }
             }
@@ -3906,7 +4187,7 @@ function Show-Page([int]$n) {
             $btnCancel.Enabled = $false
             Start-Installation
         }
-        6 {
+        7 {
             $btnBack.Enabled     = $false
             $btnCancel.Text      = "Close"
             $btnNext.Text        = "Finish"
@@ -3920,7 +4201,7 @@ function Show-Page([int]$n) {
 }
 # --- Button handlers ------
 $btnNext.Add_Click({
-    if ($script:idx -eq 6) {
+    if ($script:idx -eq 7) {
         Write-Log "Finish clicked"
         if ($chkLaunch.Checked) {
             Write-Log "Launching $APP_NAME"
@@ -3950,8 +4231,8 @@ $btnCancel.Add_Click({ $form.Close() })
 $form.Add_Load({
     $regPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$APP_NAME"
     $props   = Get-ItemProperty $regPath -ErrorAction SilentlyContinue
-    if ($props -and $props.InstallLocation -and (Test-Path $props.InstallLocation)) {
-        $script:existingInstallDir = $props.InstallLocation
+    if ($props -and $props.InstallLocation -and (Test-Path $props.InstallLocation.TrimEnd('.'))) {
+        $script:existingInstallDir = $props.InstallLocation.TrimEnd('.')
         $script:existingVersion    = if ($props.DisplayVersion) { $props.DisplayVersion } else { "0.0.0" }
         Write-Log "Existing install detected: v$($script:existingVersion) at $($props.InstallLocation)"
         $lblReinstPath.Text  = "Installed in: $($props.InstallLocation)  (v$($script:existingVersion))"
@@ -3970,6 +4251,14 @@ $form.Add_Load({
         Show-Page 0
     }
 })
+[System.Windows.Forms.Application]::SetUnhandledExceptionMode(
+    [System.Windows.Forms.UnhandledExceptionMode]::CatchException)
+[System.Windows.Forms.Application]::add_ThreadException({
+    param($s, $e)
+    Write-Log "Unhandled exception: $($e.Exception)" "ERROR"
+    try { Show-Dialog "$APP_NAME Setup" "An error occurred:`n$($e.Exception.Message)" @("OK") } catch {}
+})
+
 try {
     [System.Windows.Forms.Application]::Run($form)
 } finally {
