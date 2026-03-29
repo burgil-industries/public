@@ -42,13 +42,13 @@
 #   The installer is split into two phases to avoid showing both a console
 #   window and a GUI window at the same time.  Phase 1 (the original process)
 #   shows an ASCII loading screen in the console.  It launches Phase 2 as a
-#   hidden process (the WinForms wizard) and then exits — so the user only
+#   hidden process (the WinForms wizard) and then exits - so the user only
 #   ever sees one window.  To launch a new PowerShell process you need a file
 #   path, so the script copies itself to %TEMP% first.  When already running
 #   from a file on disk (PSCommandPath is set) it just copies that file;
 #   when piped via `iex` it writes its own source text to the temp path.
 #   The temp file is referenced by $script:setupTmp and only serves this
-#   purpose — it is not used to persist anything after the installer exits.
+#   purpose - it is not used to persist anything after the installer exits.
 #
 # WHY THIS SCRIPT IMPORTS kernel32.dll / user32.dll
 #   The installer draws a fully custom dark-themed UI (DarkButton,
@@ -64,7 +64,7 @@
 #   All registry writes are in HKCU (current user only, no admin required).
 #   They cover standard installer operations: Add/Remove Programs entry,
 #   optional URI scheme (computer://), optional file type (.computer), and
-#   optional right-click menu — all gated behind user-visible checkboxes on
+#   optional right-click menu - all gated behind user-visible checkboxes on
 #   the Confirm page and all reversible by the included Uninstaller.
 #
 # WHY VBS FILES LAUNCH POWERSHELL
@@ -94,7 +94,7 @@ if (-not $env:COMPUTER_SETUP_HEADLESS) {
     # Phase 1 -> Phase 2 handoff.
     # Copy self to %TEMP% so we have a file path to pass to the new process,
     # then start it hidden.  The current (console) process shows the loading
-    # screen while Phase 2 initialises, then exits — leaving only the GUI
+    # screen while Phase 2 initialises, then exits - leaving only the GUI
     # window visible.  The hidden flag prevents a second terminal from
     # appearing behind the wizard; the process is still visible in Task Manager.
     $script:setupTmp = "$env:TEMP\computer_setup_launch.ps1"
@@ -3305,7 +3305,7 @@ public class ShellNotify {
 # --- Installation ---------
 # This function performs all install steps sequentially.  Every step that
 # touches the registry, file system, or shell integration is explained inline.
-# All registry writes go to HKCU (current user) — no admin rights required.
+# All registry writes go to HKCU (current user) - no admin rights required.
 # All optional features (startup, PATH, right-click, etc.) are gated behind
 # checkboxes the user sees and controls on the Confirm page (04-confirm.ps1).
 function Start-Installation {
@@ -3369,7 +3369,7 @@ public class ShellNotify {
 
         @{ Pct = 42; Msg = "Writing files...";
            Action = {
-               # $FILE_MANIFEST is populated at build time by {{EMBED_DIR:app/}} —
+               # $FILE_MANIFEST is populated at build time by {{EMBED_DIR:app/}} -
                # every file under app/ is embedded as a here-string variable and
                # extracted here.  .vbs and .cmd files are written as ASCII because
                # WScript / cmd.exe do not handle UTF-8 BOM gracefully.
@@ -3474,7 +3474,7 @@ public class ShellNotify {
            Action = {
                # Adds COMPUTER to Add/Remove Programs (HKCU uninstall key).
                # Uses HKCU so no admin rights are needed.  The UninstallString
-               # points to uninstall.vbs in the install directory — a plain-text
+               # points to uninstall.vbs in the install directory - a plain-text
                # script the user can read and audit at any time.
                $key = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$APP_NAME"
                New-Item -Path $key -Force | Out-Null
@@ -3497,7 +3497,7 @@ public class ShellNotify {
 
         @{ Pct = 88; Msg = "Applying optional features (1/7): Run on startup...";
            Action = {
-               # Startup shortcut — only created when $chkStartup.Checked is true
+               # Startup shortcut - only created when $chkStartup.Checked is true
                # (user explicitly opted in on the Confirm page).  Uses the standard
                # Startup folder (%APPDATA%\...\Startup), not the Run registry key,
                # so it is visible and removable via Task Manager > Startup tab.
