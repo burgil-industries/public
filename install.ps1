@@ -21,7 +21,7 @@ if (-not $env:COMPUTER_SETUP_HEADLESS) {
             $MyInvocation.MyCommand.ScriptBlock.ToString(),
             [System.Text.Encoding]::UTF8)
     }
-    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$tmp`""
+    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Unrestricted -File `"$tmp`""
 
     # --- ASCII art (visible in the console while installer loads) ------
     Clear-Host
@@ -1500,14 +1500,18 @@ b) Modify the Software for personal or internal use.
 c) Create, use, modify, and distribute Plugins for the Software.
 d) Incorporate third-party code into Plugins, provided the license of that
    third-party code permits such use.
+e) Share and distribute the Software to others, provided this license
+   accompanies any distribution and no source files are altered to misrepresent
+   the origin of the Software.
 
 3. RESTRICTIONS
 
 a) You may not use, distribute, or incorporate this Software, in whole or
    in part, to build, market, or operate a Competing Product.
 
-b) You may not redistribute the Software itself (not as a Plugin) without
-   prior written permission from the copyright holder.
+b) You may not redistribute a modified version of the Software itself (not
+   as a Plugin) without prior written permission from the copyright holder.
+   Unmodified redistribution is permitted under section 2(e).
 
 c) You may not remove or alter any copyright, license, or attribution
    notices present in the Software.
@@ -1535,13 +1539,46 @@ access to or use of the Software is prohibited by the laws of your region,
 you must not use it. Proceeding with installation or use constitutes your
 confirmation that such use is permitted under the laws applicable to you.
 
-6. PLUGINS
+6. PLUGINS AND OPEN SOURCE REQUIREMENT
 
-Plugins you create are your own work. This license places no restrictions
-on the license you choose for your Plugins, provided the Plugin does not
-itself constitute a Competing Product.
+The COMPUTER ecosystem is built on the principle that users should always be
+able to inspect, audit, and trust what runs on their machines. To uphold this
+principle, the following requirements apply to all publicly distributed Plugins:
 
-7. DISCLAIMER - USE AT YOUR OWN RISK
+a) Any Plugin distributed publicly (released outside of personal or internal
+   use) MUST be licensed under the GNU Affero General Public License v3.0
+   (AGPLv3) or a compatible license approved in writing by the copyright
+   holder.
+
+   Full license text: https://www.gnu.org/licenses/agpl-3.0
+   Plain-language summary: https://www.tldrlegal.com/license/gnu-affero-general-public-license-v3-agpl-3-0
+
+b) Any publicly distributed Plugin MUST make its complete source code freely
+   available. Closed-source plugins distributed to others are not permitted
+   in the COMPUTER ecosystem.
+
+c) Plugins you create for personal or internal use are not subject to these
+   distribution requirements and may be kept private.
+
+d) The AGPLv3 requirement exists because COMPUTER connects to networks and
+   AI providers. The AGPLv3 closes the "network use" loophole - if you modify
+   a plugin and offer it to others over a network, you must provide the source.
+   This ensures the entire ecosystem remains open and auditable.
+
+e) Third-party libraries incorporated into Plugins must be compatible with
+   AGPLv3. The plugin author is responsible for ensuring compatibility.
+
+f) A Plugin does not constitute a Competing Product solely by implementing
+   features that interact with or extend the Software's functionality.
+
+7. OPEN SOURCE COMMITMENT
+
+The authors commit that the Software itself will remain open source and freely
+available under these terms. The source code for the Software, including the
+installer, runtime, and all core components, will always be publicly accessible
+for inspection and audit before running on any machine.
+
+8. DISCLAIMER - USE AT YOUR OWN RISK
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED. YOU USE THIS SOFTWARE ENTIRELY AT YOUR OWN RISK.
@@ -1575,620 +1612,6 @@ $FILE_MANIFEST = [ordered]@{
     'data/src/permissions.js' = $FILE_DATA_SRC_PERMISSIONS_JS
     'LICENSE.txt' = $FILE_LICENSE_TXT
 }
-
-# --- Plugin files (auto-embedded from plugins/ by build.ps1) ---
-$FILE_DATA_PLUGINS_CORE_INDEX_JS = @'
-'use strict';
-const EventEmitter = require('events');
-const path         = require('path');
-
-// ── EventBus ──────────────────────────────────────────────────────────────────
-class EventBus extends EventEmitter {}
-
-// ── Config ────────────────────────────────────────────────────────────────────
-class Config {
-    constructor(ctx) {
-        this._ctx  = ctx;
-        this._file = path.join(ctx.dataDir, 'config.json');
-        this._data = {};
-        this._load();
-    }
-
-    _load() {
-        try { this._data = JSON.parse(this._ctx.readFile(this._file)); }
-        catch (_) { this._data = {}; }
-    }
-
-    get(key, def = undefined) {
-        return key in this._data ? this._data[key] : def;
-    }
-
-    set(key, val) {
-        this._data[key] = val;
-        try { this._ctx.writeFile(this._file, JSON.stringify(this._data, null, 2)); }
-        catch (e) { console.error(`[core] config write failed: ${e.message}`); }
-    }
-
-    all() { return Object.assign({}, this._data); }
-}
-
-// ── Logger ────────────────────────────────────────────────────────────────────
-function makeLogger(events) {
-    return function log(msg, level = 'INFO') {
-        const line = `[${new Date().toISOString()}] [${level}] ${msg}`;
-        console.log(line);
-        events.emit('core:log', { level, msg, line });
-    };
-}
-
-// ── Plugin install ────────────────────────────────────────────────────────────
-module.exports = {
-    install(ctx) {
-        const bus    = new EventBus();
-        const config = new Config(ctx);
-        const log    = makeLogger(bus);
-
-        ctx.provide('events', bus);
-        ctx.provide('config', config);
-        ctx.provide('log',    log);
-
-        log(`core plugin loaded`);
-    }
-};
-'@
-
-$FILE_DATA_PLUGINS_CORE_PLUGIN_JSON = @'
-{
-  "id": "core",
-  "name": "Core",
-  "version": "1.0.0",
-  "description": "Core plugin - event bus, persistent config, logger",
-  "main": "index.js",
-  "dependencies": {},
-  "permissions": [
-    "fs.read:${dataDir}",
-    "fs.write:${dataDir}",
-    "ctx.provide"
-  ]
-}
-'@
-
-$FILE_DATA_PLUGINS_EXAMPLE_TODO_TXT = @'
-Under construction
-'@
-
-$FILE_DATA_PLUGINS_PHONE_TODO_TXT = @'
-Under construction
-'@
-
-$FILE_DATA_PLUGINS_SETTINGS_INDEX_JS = @'
-'use strict';
-const path = require('path');
-
-module.exports = {
-    install(ctx) {
-        const log           = ctx.use('log');
-        const config        = ctx.use('config');
-        const registerPanel = ctx.use('ui.registerPanel');
-
-        // Register the settings panel with the UI plugin
-        registerPanel('settings', path.join(__dirname, 'panel.html'), 'Settings');
-
-        // WS: settings:get_all -> send all config entries + app/plugin info
-        ctx.onMessage('settings:get_all', (socket, _msg) => {
-            ctx.reply(socket, {
-                type:    'settings:state',
-                config:  config.all(),
-                app:     ctx.appName,
-                version: ctx.appVersion,
-                plugins: ctx.loadedPlugins(),
-            });
-        });
-
-        // WS: settings:set { key, value }
-        ctx.onMessage('settings:set', (socket, msg) => {
-            if (typeof msg.key !== 'string' || msg.key.trim() === '') {
-                ctx.reply(socket, { type: 'error', message: 'settings:set requires a key string' });
-                return;
-            }
-            config.set(msg.key, msg.value);
-            log(`settings: config["${msg.key}"] = ${JSON.stringify(msg.value)}`);
-            ctx.broadcast({ type: 'settings:changed', key: msg.key, value: msg.value });
-        });
-
-        log(`settings plugin loaded`);
-    }
-};
-'@
-
-$FILE_DATA_PLUGINS_SETTINGS_PANEL_HTML = @'
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Settings</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    font-family: system-ui, -apple-system, sans-serif;
-    background: #0a0a0f;
-    color: #e2e8f0;
-    min-height: 100vh;
-    padding: 32px 24px;
-  }
-
-  header {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    margin-bottom: 32px;
-    border-bottom: 1px solid #1e293b;
-    padding-bottom: 20px;
-  }
-
-  header h1   { font-size: 1.4rem; font-weight: 600; letter-spacing: -.3px; }
-  header span { font-size: 0.8rem; color: #64748b; font-family: monospace; }
-
-  .status {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.75rem;
-    color: #64748b;
-    margin-left: auto;
-  }
-  .dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: #ef4444;
-    transition: background .3s;
-  }
-  .dot.connected { background: #22c55e; }
-
-  section {
-    background: #0f172a;
-    border: 1px solid #1e293b;
-    border-radius: 10px;
-    padding: 20px 24px;
-    margin-bottom: 20px;
-  }
-
-  section h2 {
-    font-size: 0.7rem;
-    font-weight: 600;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-    color: #475569;
-    margin-bottom: 16px;
-  }
-
-  .info-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 0;
-    border-bottom: 1px solid #1e293b;
-    font-size: 0.875rem;
-  }
-  .info-row:last-child { border-bottom: none; }
-  .info-row .label  { color: #94a3b8; }
-  .info-row .value  { font-family: monospace; color: #e2e8f0; }
-
-  .plugin-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 20px;
-    padding: 3px 10px;
-    font-size: 0.75rem;
-    color: #94a3b8;
-    margin: 3px;
-  }
-  .plugin-badge .ver { color: #475569; font-family: monospace; }
-
-  .field-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin-bottom: 12px;
-  }
-  @media (max-width: 520px) { .field-row { grid-template-columns: 1fr; } }
-
-  label { font-size: 0.8rem; color: #94a3b8; display: block; margin-bottom: 5px; }
-
-  input[type="text"], input[type="number"] {
-    width: 100%;
-    background: #020617;
-    border: 1px solid #334155;
-    border-radius: 6px;
-    color: #e2e8f0;
-    padding: 8px 12px;
-    font-size: 0.875rem;
-    font-family: monospace;
-    outline: none;
-    transition: border-color .15s;
-  }
-  input:focus { border-color: #6366f1; }
-
-  .actions { display: flex; gap: 10px; margin-top: 16px; }
-
-  button {
-    padding: 8px 20px;
-    border-radius: 6px;
-    border: none;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: opacity .15s;
-  }
-  button:hover { opacity: .85; }
-  button.primary { background: #6366f1; color: #fff; }
-  button.secondary { background: #1e293b; color: #94a3b8; border: 1px solid #334155; }
-
-  .toast {
-    position: fixed;
-    bottom: 24px; right: 24px;
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 8px;
-    padding: 12px 18px;
-    font-size: 0.85rem;
-    opacity: 0;
-    transform: translateY(6px);
-    transition: opacity .2s, transform .2s;
-    pointer-events: none;
-  }
-  .toast.show { opacity: 1; transform: translateY(0); }
-
-  #plugins-list { display: flex; flex-wrap: wrap; gap: 4px; }
-  #no-conn { color: #ef4444; font-size: 0.8rem; padding: 8px 0; }
-</style>
-</head>
-<body>
-
-<header>
-  <h1 id="app-title">Settings</h1>
-  <span id="app-version"></span>
-  <div class="status">
-    <div class="dot" id="dot"></div>
-    <span id="conn-label">Connecting…</span>
-  </div>
-</header>
-
-<section>
-  <h2>App Info</h2>
-  <div class="info-row"><span class="label">Name</span>    <span class="value" id="info-name">-</span></div>
-  <div class="info-row"><span class="label">Version</span> <span class="value" id="info-version">-</span></div>
-  <div class="info-row"><span class="label">WS Port</span> <span class="value">53420</span></div>
-  <div class="info-row"><span class="label">UI Port</span> <span class="value">53421</span></div>
-</section>
-
-<section>
-  <h2>Loaded Plugins</h2>
-  <div id="plugins-list"><span id="no-conn">Not connected</span></div>
-</section>
-
-<section>
-  <h2>Config</h2>
-  <div class="field-row">
-    <div>
-      <label for="cfg-key">Key</label>
-      <input type="text" id="cfg-key" placeholder="e.g. ui.port">
-    </div>
-    <div>
-      <label for="cfg-value">Value</label>
-      <input type="text" id="cfg-value" placeholder="value">
-    </div>
-  </div>
-  <div class="actions">
-    <button class="primary"    id="btn-set">Set</button>
-    <button class="secondary"  id="btn-get">Get</button>
-    <button class="secondary"  id="btn-refresh">Refresh</button>
-  </div>
-</section>
-
-<div class="toast" id="toast"></div>
-
-<script>
-const WS_URL = 'ws://127.0.0.1:53420';
-let ws = null;
-let reconnectTimer = null;
-
-const dot        = document.getElementById('dot');
-const connLabel  = document.getElementById('conn-label');
-const appTitle   = document.getElementById('app-title');
-const appVersion = document.getElementById('app-version');
-const infoName   = document.getElementById('info-name');
-const infoVer    = document.getElementById('info-version');
-const plugsList  = document.getElementById('plugins-list');
-const noConn     = document.getElementById('no-conn');
-const cfgKey     = document.getElementById('cfg-key');
-const cfgValue   = document.getElementById('cfg-value');
-const toast      = document.getElementById('toast');
-
-let toastTimer = null;
-function showToast(msg) {
-    clearTimeout(toastTimer);
-    toast.textContent = msg;
-    toast.classList.add('show');
-    toastTimer = setTimeout(() => toast.classList.remove('show'), 2800);
-}
-
-function send(obj) {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
-}
-
-function setConnected(ok) {
-    dot.className = 'dot' + (ok ? ' connected' : '');
-    connLabel.textContent = ok ? 'Connected' : 'Disconnected';
-    if (!ok) {
-        noConn.style.display = '';
-        plugsList.querySelectorAll('.plugin-badge').forEach(el => el.remove());
-    }
-}
-
-function renderPlugins(plugins) {
-    noConn.style.display = 'none';
-    plugsList.querySelectorAll('.plugin-badge').forEach(el => el.remove());
-    if (!plugins || !Object.keys(plugins).length) {
-        noConn.style.display = '';
-        noConn.textContent = 'No plugins registered';
-        return;
-    }
-    for (const [id, info] of Object.entries(plugins)) {
-        const b = document.createElement('span');
-        b.className = 'plugin-badge';
-        b.innerHTML = `${id} <span class="ver">v${info.version || '?'}</span>`;
-        plugsList.appendChild(b);
-    }
-}
-
-function onMessage(data) {
-    let msg;
-    try { msg = JSON.parse(data); } catch (_) { return; }
-
-    if (msg.type === 'settings:state') {
-        infoName.textContent    = msg.app     || '-';
-        infoVer.textContent     = msg.version || '-';
-        appTitle.textContent    = (msg.app || 'Settings') + ' - Settings';
-        appVersion.textContent  = msg.version ? `v${msg.version}` : '';
-        renderPlugins(msg.plugins);
-
-        const cfg = msg.config || {};
-        if (cfgKey.value && cfgKey.value in cfg) {
-            cfgValue.value = String(cfg[cfgKey.value]);
-        }
-    }
-
-    if (msg.type === 'settings:changed') {
-        showToast(`Saved: ${msg.key} = ${JSON.stringify(msg.value)}`);
-        if (cfgKey.value === msg.key) cfgValue.value = String(msg.value);
-    }
-
-    if (msg.type === 'error') {
-        showToast('Error: ' + msg.message);
-    }
-}
-
-function connect() {
-    ws = new WebSocket(WS_URL);
-
-    ws.addEventListener('open', () => {
-        setConnected(true);
-        send({ type: 'settings:get_all' });
-    });
-
-    ws.addEventListener('message', e => onMessage(e.data));
-
-    ws.addEventListener('close', () => {
-        setConnected(false);
-        reconnectTimer = setTimeout(connect, 3000);
-    });
-
-    ws.addEventListener('error', () => {
-        ws.close();
-    });
-}
-
-document.getElementById('btn-set').addEventListener('click', () => {
-    const k = cfgKey.value.trim();
-    const v = cfgValue.value;
-    if (!k) { showToast('Enter a key first'); return; }
-    // Try to parse value as JSON, fall back to string
-    let val;
-    try { val = JSON.parse(v); } catch (_) { val = v; }
-    send({ type: 'settings:set', key: k, value: val });
-});
-
-document.getElementById('btn-get').addEventListener('click', () => {
-    send({ type: 'settings:get_all' });
-});
-
-document.getElementById('btn-refresh').addEventListener('click', () => {
-    send({ type: 'settings:get_all' });
-    showToast('Refreshed');
-});
-
-connect();
-</script>
-</body>
-</html>
-'@
-
-$FILE_DATA_PLUGINS_SETTINGS_PLUGIN_JSON = @'
-{
-  "id": "settings",
-  "name": "Settings",
-  "version": "1.0.0",
-  "description": "Settings panel - demonstrates the UI plugin; exposes config read/write over WebSocket",
-  "main": "index.js",
-  "dependencies": {
-    "core": "*",
-    "ui": "*"
-  },
-  "permissions": [
-    "ctx.broadcast"
-  ]
-}
-'@
-
-$FILE_DATA_PLUGINS_UI_INDEX_JS = @'
-'use strict';
-const path = require('path');
-const url  = require('url');
-
-// Panels registered by other plugins: id -> { htmlPath, title }
-const panels = new Map();
-
-// Serve a file by extension with correct content-type
-const MIME = {
-    '.html': 'text/html',
-    '.css':  'text/css',
-    '.js':   'application/javascript',
-    '.json': 'application/json',
-    '.png':  'image/png',
-    '.svg':  'image/svg+xml',
-};
-
-function serveFile(ctx, res, filePath) {
-    try {
-        const ext  = path.extname(filePath).toLowerCase();
-        const mime = MIME[ext] || 'text/plain';
-        const data = ctx.readFileBuffer(filePath);
-        res.writeHead(200, { 'Content-Type': mime });
-        res.end(data);
-    } catch (_) {
-        res.writeHead(404);
-        res.end('Not found');
-    }
-}
-
-function buildIndex(appName, appVersion) {
-    const rows = [...panels.entries()].map(([id, p]) =>
-        `<li><a href="/${id}">${p.title || id}</a></li>`
-    ).join('');
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>${appName} - Panels</title>
-<style>
-  body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #e2e8f0;
-         display: flex; flex-direction: column; align-items: center; padding: 48px 24px; margin: 0; }
-  h1   { font-size: 1.5rem; margin-bottom: 8px; }
-  p    { color: #64748b; margin-bottom: 32px; }
-  ul   { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-  a    { display: block; padding: 14px 28px; background: #1e293b; border: 1px solid #334155;
-         border-radius: 8px; color: #e2e8f0; text-decoration: none; font-size: 1rem;
-         transition: background .15s; }
-  a:hover { background: #334155; }
-</style>
-</head>
-<body>
-  <h1>${appName}</h1>
-  <p>v${appVersion}</p>
-  ${rows.length ? `<ul>${rows}</ul>` : '<p>No panels registered yet.</p>'}
-</body>
-</html>`;
-}
-
-module.exports = {
-    install(ctx) {
-        const log     = ctx.use('log');
-        const config  = ctx.use('config');
-        const events  = ctx.use('events');
-        const port    = config.get('ui.port', 53421);
-
-        // Service: register a panel by id with a path to its HTML file
-        ctx.provide('ui.registerPanel', (id, htmlPath, title = id) => {
-            panels.set(id, { htmlPath: path.resolve(htmlPath), title });
-            log(`ui: registered panel "${id}" (${title})`);
-            events.emit('ui:panel:registered', { id, title });
-        });
-
-        // Service: open a panel in the default browser
-        ctx.provide('ui.openPanel', (id = '') => {
-            const target = `http://127.0.0.1:${port}/${id}`;
-            ctx.execAsync(`start "" "${target}"`);
-            log(`ui: opened panel "${id}" -> ${target}`);
-        });
-
-        const server = ctx.listen(port, (req, res) => {
-            res.setHeader('Access-Control-Allow-Origin', '*');
-
-            const parsed  = url.parse(req.url || '/');
-            const panelId = (parsed.pathname || '/').replace(/^\//, '').split('/')[0];
-
-            // Root -> panel index
-            if (!panelId) {
-                res.writeHead(200, { 'Content-Type': 'text/html' });
-                res.end(buildIndex(ctx.appName, ctx.appVersion));
-                return;
-            }
-
-            // Static asset within a panel dir: /<panelId>/file.ext
-            const subPath = (parsed.pathname || '/').replace(/^\/[^/]+/, '');
-            if (subPath && subPath !== '/') {
-                const panel = panels.get(panelId);
-                if (panel) {
-                    const asset = path.join(path.dirname(panel.htmlPath), subPath);
-                    serveFile(ctx, res, asset);
-                    return;
-                }
-            }
-
-            // Panel HTML
-            if (panels.has(panelId)) {
-                serveFile(ctx, res, panels.get(panelId).htmlPath);
-                return;
-            }
-
-            res.writeHead(404);
-            res.end('Panel not found');
-        });
-
-        server.on('error', err => log(`ui: server error - ${err.message}`, 'ERROR'));
-
-        log(`ui: panel server -> http://127.0.0.1:${port}`);
-        events.emit('ui:ready', { port });
-
-        log(`ui plugin loaded`);
-    }
-};
-'@
-
-$FILE_DATA_PLUGINS_UI_PLUGIN_JSON = @'
-{
-  "id": "ui",
-  "name": "UI",
-  "version": "1.0.0",
-  "description": "UI plugin - serves HTML panels via local HTTP; provides panel registration API",
-  "main": "index.js",
-  "dependencies": {
-    "core": "*"
-  },
-  "permissions": [
-    "net.listen:53421",
-    "fs.read",
-    "ctx.provide",
-    "system.exec:start"
-  ]
-}
-'@
-
-$FILE_MANIFEST['data/plugins/core/index.js'] = $FILE_DATA_PLUGINS_CORE_INDEX_JS
-$FILE_MANIFEST['data/plugins/core/plugin.json'] = $FILE_DATA_PLUGINS_CORE_PLUGIN_JSON
-$FILE_MANIFEST['data/plugins/example/todo.txt'] = $FILE_DATA_PLUGINS_EXAMPLE_TODO_TXT
-$FILE_MANIFEST['data/plugins/phone/todo.txt'] = $FILE_DATA_PLUGINS_PHONE_TODO_TXT
-$FILE_MANIFEST['data/plugins/settings/index.js'] = $FILE_DATA_PLUGINS_SETTINGS_INDEX_JS
-$FILE_MANIFEST['data/plugins/settings/panel.html'] = $FILE_DATA_PLUGINS_SETTINGS_PANEL_HTML
-$FILE_MANIFEST['data/plugins/settings/plugin.json'] = $FILE_DATA_PLUGINS_SETTINGS_PLUGIN_JSON
-$FILE_MANIFEST['data/plugins/ui/index.js'] = $FILE_DATA_PLUGINS_UI_INDEX_JS
-$FILE_MANIFEST['data/plugins/ui/plugin.json'] = $FILE_DATA_PLUGINS_UI_PLUGIN_JSON
 
 # --- RichTextBox styled append ----------------------
 function RTB-Write {
@@ -2364,7 +1787,7 @@ $form.MinimizeBox     = $false
 $form.BackColor       = $C_BG
 
 $form.Add_Load({
-    # Remove WS_EX_APPWINDOW (0x40000) from the console and hide it — this strips
+    # Remove WS_EX_APPWINDOW (0x40000) from the console and hide it - this strips
     # the taskbar entry and hides the window at the exact moment the form appears.
     $hCon = [ConsoleUtils.Window]::GetConsoleWindow()
     if ($hCon -ne [IntPtr]::Zero) {
@@ -2538,7 +1961,8 @@ RTB-Write $licBox "Subject to the conditions below, you are granted a worldwide,
 RTB-Write $licBox "a) Use, run, and inspect the Software for any personal or internal purpose.`n" $C_TEXT
 RTB-Write $licBox "b) Modify the Software for personal or internal use.`n" $C_TEXT
 RTB-Write $licBox "c) Create, use, modify, and distribute Plugins for the Software.`n" $C_TEXT
-RTB-Write $licBox "d) Incorporate third-party code into Plugins, provided the license of that`n   third-party code permits such use.`n`n" $C_TEXT
+RTB-Write $licBox "d) Incorporate third-party code into Plugins, provided the license of that`n   third-party code permits such use.`n" $C_TEXT
+RTB-Write $licBox "e) Share and distribute the Software to others, provided this license`n   accompanies any distribution and no files are altered to misrepresent origin.`n`n" $C_TEXT
 
 RTB-Write $licBox "3. RESTRICTIONS`n" $C_DANGER -Bold
 RTB-Write $licBox "a) You may not use, distribute, or incorporate this Software, in whole or`n   in part, to build, market, or operate a Competing Product.`n`n" $C_TEXT
@@ -2554,8 +1978,10 @@ RTB-Write $licBox "c) In any manner that could damage, disable, overburden, or i
 RTB-Write $licBox "5. REGIONAL COMPLIANCE`n" ([System.Drawing.Color]::FromArgb(255, 200, 60)) -Bold
 RTB-Write $licBox "You are solely responsible for determining whether your use of the Software`nis lawful in your jurisdiction. The authors make no representation that the`nSoftware is appropriate or available for use in any specific location. If`naccess to or use of the Software is prohibited by the laws of your region,`nyou must not use it. Proceeding with installation or use constitutes your`nconfirmation that such use is permitted under the laws applicable to you.`n`n" $C_TEXT
 
-RTB-Write $licBox "6. PLUGINS`n" $C_ACCENT -Bold
-RTB-Write $licBox "Plugins you create are your own work. This license places no restrictions`non the license you choose for your Plugins, provided the Plugin does not`nitself constitute a Competing Product.`n`n" $C_TEXT
+RTB-Write $licBox "6. PLUGINS AND OPEN SOURCE REQUIREMENT`n" $C_ACCENT -Bold
+RTB-Write $licBox "The COMPUTER ecosystem is built on transparency. Any Plugin distributed`npublicly MUST be licensed under the " $C_TEXT
+RTB-Write $licBox "GNU Affero General Public License v3.0 (AGPLv3)" $C_ACCENT -Bold
+RTB-Write $licBox "`nand its source code must be freely available. Plugins kept for personal`nor internal use only are not subject to this requirement.`n`n" $C_TEXT
 
 RTB-Write $licBox "7. DISCLAIMER - USE AT YOUR OWN RISK`n" ([System.Drawing.Color]::FromArgb(255, 200, 60)) -Bold
 RTB-Write $licBox "THE SOFTWARE IS PROVIDED " $C_DIM
@@ -2576,7 +2002,7 @@ $pgLicense.Controls.Add((New-Label "[x]  YOU CANNOT" 276 162 238 15 8 Bold $C_DA
 # Vertical divider
 $licDiv           = New-Object System.Windows.Forms.Panel
 $licDiv.Location  = New-Object System.Drawing.Point(265, 160)
-$licDiv.Size      = New-Object System.Drawing.Size(1, 82)
+$licDiv.Size      = New-Object System.Drawing.Size(1, 90)
 $licDiv.BackColor = $C_BORDER
 $pgLicense.Controls.Add($licDiv)
 
@@ -2594,25 +2020,27 @@ $pgLicense.Controls.AddRange(@(
     (New-LicItem "[+] Personal use"      30  181 $C_SUCCESS "Use $APP_NAME freely for personal projects, learning, and experimentation"),
     (New-LicItem "[+] Build plugins"    152  181 $C_SUCCESS "Create extensions and integrations that work with and depend on $APP_NAME"),
     (New-LicItem "[+] Modify source"     30  198 $C_SUCCESS "Edit the source code to suit your personal or internal needs"),
-    (New-LicItem "[+] Share plugins"    152  198 $C_SUCCESS "Distribute your plugins to others under any license you choose"),
+    (New-LicItem "[+] Share freely"     152  198 $C_SUCCESS "Share and distribute $APP_NAME to others - unmodified, with this license included"),
     (New-LicItem "[+] Run internally"    30  215 $C_SUCCESS "Deploy $APP_NAME within your organization for internal business use"),
-    (New-LicItem "[+] Use licensed code" 152 215 $C_SUCCESS "Incorporate third-party libraries in your plugins if their license permits")
+    (New-LicItem "[+] Use licensed code" 152 215 $C_SUCCESS "Incorporate third-party libraries in your plugins if their AGPLv3-compatible license permits"),
+    (New-LicItem "[+] Share plugins"     30  232 $C_SUCCESS "Distribute your plugins to others - must be open source under AGPLv3 when distributed publicly")
 ))
 
 # CANNOT - col 3 (x=276) and col 4 (x=396)
 $pgLicense.Controls.AddRange(@(
     (New-LicItem "[x] Compete with us"     276 181 $C_DANGER "Do not build a product whose primary purpose overlaps with $APP_NAME's core functionality"),
     (New-LicItem "[x] Violate local laws"  396 181 $C_DANGER "You must verify that using $APP_NAME is legal in your country or region before installing"),
-    (New-LicItem "[x] Redistribute it"    276 198 $C_DANGER "Do not package or distribute $APP_NAME itself without prior written permission from the authors"),
+    (New-LicItem "[x] Redistribute it"    276 198 $C_DANGER "Do not distribute a modified version of $APP_NAME itself without prior written permission"),
     (New-LicItem "[x] Illegal/harmful use" 396 198 $C_DANGER "Do not use $APP_NAME for fraud, malware, unauthorized system access, or any harmful activity"),
     (New-LicItem "[x] Remove notices"      276 215 $C_DANGER "Do not remove or alter any copyright, license, or attribution notices in the source"),
-    (New-LicItem "[x] Hold liable"         396 215 $C_DANGER "Authors are not liable for any damages - you use this software entirely at your own risk")
+    (New-LicItem "[x] Hold liable"         396 215 $C_DANGER "Authors are not liable for any damages - you use this software entirely at your own risk"),
+    (New-LicItem "[x] Closed plugins"      276 232 ([System.Drawing.Color]::FromArgb(255,140,0)) "Public plugins MUST be open source under AGPLv3 - closed-source plugin distribution is not permitted")
 ))
 
 # --- Disclaimer note ---
 $licWarn           = New-Object System.Windows.Forms.Label
 $licWarn.Text      = "[!]  Used at your own risk - no warranty, no liability for any damages or losses. You are solely responsible for ensuring use is legal in your region."
-$licWarn.Location  = New-Object System.Drawing.Point(30, 247)
+$licWarn.Location  = New-Object System.Drawing.Point(30, 254)
 $licWarn.Size      = New-Object System.Drawing.Size(480, 30)
 $licWarn.Font      = New-Object System.Drawing.Font("Segoe UI", 8)
 $licWarn.ForeColor = $C_DIM
@@ -2622,7 +2050,7 @@ $pgLicense.Controls.Add($licWarn)
 # --- Accept checkbox ---
 $chkLicense           = New-Object System.Windows.Forms.CheckBox
 $chkLicense.Text      = "I accept the terms of the license agreement"
-$chkLicense.Location  = New-Object System.Drawing.Point(30, 286)
+$chkLicense.Location  = New-Object System.Drawing.Point(30, 293)
 $chkLicense.Size      = New-Object System.Drawing.Size(480, 24)
 $chkLicense.Font      = New-Object System.Drawing.Font("Segoe UI", 10)
 $chkLicense.ForeColor = $C_TEXT
@@ -2679,12 +2107,12 @@ RTB-Write $legalBox "THIRD-PARTY MODULES     " $C_ORANGE -Bold
 RTB-Write $legalBox "Third-party plugins are not reviewed by the author.`n" $C_TEXT
 
 RTB-Write $legalBox "  6. " $C_ACCENT -Bold
-RTB-Write $legalBox "LOCAL DATA PROCESSING   " $C_ACCENT -Bold
-RTB-Write $legalBox "No data is collected or transmitted by the author.`n" $C_TEXT
+RTB-Write $legalBox "DATA TRANSPARENCY       " $C_ACCENT -Bold
+RTB-Write $legalBox "COMPUTER itself does not collect or transmit your data.`n" $C_TEXT
 
 RTB-Write $legalBox "  7. " $C_ACCENT -Bold
 RTB-Write $legalBox "AI TRANSPARENCY         " $C_VIOLET -Bold
-RTB-Write $legalBox "Local AI runs on-machine. Cloud providers governed by their own terms.`n" $C_TEXT
+RTB-Write $legalBox "AI providers you configure are governed by their own terms of service.`n" $C_TEXT
 
 RTB-Write $legalBox "  8. " $C_ACCENT -Bold
 RTB-Write $legalBox "GRACE PERIOD            " $C_SUCCESS -Bold
@@ -2736,20 +2164,20 @@ RTB-Write $legalBox "  Install them at your own risk. Report violations: " $C_TE
 RTB-Write $legalBox "legal@burgil.dev`n`n"                      $C_ACCENT
 
 # --- Privacy ---
-RTB-Write $legalBox "  Privacy`n"                               $C_ACCENT -Bold -Size 9.5
-RTB-Write $legalBox "  All core processing runs "               $C_TEXT
-RTB-Write $legalBox "on your machine"                           $C_ACCENT -Bold
-RTB-Write $legalBox ". The author does "                        $C_TEXT
+RTB-Write $legalBox "  Data Transparency`n"                     $C_ACCENT -Bold -Size 9.5
+RTB-Write $legalBox "  COMPUTER itself does "                   $C_TEXT
 RTB-Write $legalBox "not"                                       $C_ACCENT -Bold
-RTB-Write $legalBox " collect or`n  transmit your data. "       $C_TEXT
+RTB-Write $legalBox " collect or transmit your data.`n"         $C_TEXT
+RTB-Write $legalBox "  "                                        $C_TEXT
 RTB-Write $legalBox "Plugins"                                   $C_ORANGE -Bold
-RTB-Write $legalBox " connecting to the internet are governed by their own terms.`n`n" $C_TEXT
+RTB-Write $legalBox " and "                                     $C_TEXT
+RTB-Write $legalBox "AI providers"                              $C_VIOLET -Bold
+RTB-Write $legalBox " you configure operate under their own terms.`n`n" $C_TEXT
 
 # --- AI Components ---
 RTB-Write $legalBox "  AI Components`n"                         $C_VIOLET -Bold -Size 9.5
-RTB-Write $legalBox "  Local AI components (models, agents, tools) run " $C_TEXT
-RTB-Write $legalBox "entirely on your machine`n"                $C_VIOLET -Bold
-RTB-Write $legalBox "  Cloud LLM providers "                    $C_TEXT
+RTB-Write $legalBox "  You choose your AI provider - local model, cloud API, or anything OpenAI-compatible.`n" $C_TEXT
+RTB-Write $legalBox "  AI providers "                           $C_TEXT
 RTB-Write $legalBox "(e.g. NVIDIA NIM, any OpenAI-compatible API)" $C_DIM
 RTB-Write $legalBox " are`n  user-configured and governed by "  $C_TEXT
 RTB-Write $legalBox "their own terms of service`n`n"            $C_VIOLET -Bold
@@ -2799,13 +2227,13 @@ $pgDeps = New-Page
 $pgDeps.Controls.Add((New-Label "Required Software" 30 18 480 26 13 Bold $C_TEXT))
 $pgDeps.Controls.Add((New-Label "The following must be installed before $APP_NAME can run:" 30 48 480 20 10 Regular $C_DIM))
 
-$lblPy       = New-Label "Python >= $MIN_PYTHON"  30  94 140 22 10 Regular $C_TEXT
+$lblPy       = New-Label "Python $([char]62)= $MIN_PYTHON"  30  94 140 22 10 Regular $C_TEXT
 $lblPyStatus = New-Label "..."                   178  94 192 22 10
 
 $btnGetPy           = New-ActionButton "Get Python" 375 91
 $btnGetPy.Add_Click({ Start-Process "https://www.python.org/downloads/" })
 
-$lblNode       = New-Label "Node.js >= $MIN_NODE"  30 128 140 22 10 Regular $C_TEXT
+$lblNode       = New-Label "Node.js $([char]62)= $MIN_NODE"  30 128 140 22 10 Regular $C_TEXT
 $lblNodeStatus = New-Label "..."                  178 128 192 22 10
 
 $btnGetNode           = New-ActionButton "Get Node.js" 375 125
@@ -4251,8 +3679,10 @@ $form.Add_Load({
         Show-Page 0
     }
 })
-[System.Windows.Forms.Application]::SetUnhandledExceptionMode(
-    [System.Windows.Forms.UnhandledExceptionMode]::CatchException)
+try {
+    [System.Windows.Forms.Application]::SetUnhandledExceptionMode(
+        [System.Windows.Forms.UnhandledExceptionMode]::CatchException)
+} catch {}
 [System.Windows.Forms.Application]::add_ThreadException({
     param($s, $e)
     Write-Log "Unhandled exception: $($e.Exception)" "ERROR"
