@@ -1,9 +1,88 @@
 # ==============================================================================
 # Burgil Industries - C.O.M.P.U.T.E.R. Protocol Bootstrapper
 # ==============================================================================
+#
+# SECURITY TRANSPARENCY NOTICE
+
+# Hi, I'm Burgil, the author, this is the installer for C.O.M.P.U.T.E.R (Completely Open Modular Program Under Trusted Execution Rules),
+# an open source modular AI hub / personal assistant platform built for windows.
+# Full source: github.com/burgil-industries/computer
+# Build instructions: github.com/burgil-industries/computer/blob/main/docs/building.md
+#
+# the installer is designed to be run via iex (piped from web with irm similar to a lot of open source software out there) e.g. irm localhost:3000/install.ps1 | iex
+#
+# Why it looks suspicious:
+# 1) the hidden powershell window - the installer shows a loading screen in the console while the winforms wizard loads in a separate hidden process, once the gui is ready, the console closes. UX choice, not evasion.
+# 2) kernel32.dll / user32.dll imports - used to draw a custom dark themed ui for the installer, custom buttons, custom title bar, standard winforms dark mode techniques, not process ibjection.
+# 3) copies itself to %temp% - purely aesthetics, the installer is split into two phases: phase 1 runs in the console and shows an ASCII loading screen and phase 2 is the winforms GUI wizard, the launch phase 2 as a separate process powershell needs a file path, so the script copies itself to %temp% first, phase 1 then exists so you never see a console window sitting behind the GUI. Unless I do that I have 2 windows open during installation, the temp file is not used for anything else, it also cleans up after itself when you close it.
+# 4) the logs in %temp% - the logs there will be needed to debug any issues that users will have, they don't contain any special data just literally install logs, once the installation is completed the logs are copied to the chosen app installation directory.
+# 5) registry writes - all go to HKCU (current user, not all users) standard add/remove program entry for uninstallation support via windows native ui, optional URI scheme, optional file type association - all behind user visible checkboxes and terms.
+# 6) vbs files launching powershell - thin launchers so shortcuts don't flash a console window, UX choice, the ps1 scripts they call are plain text in the install directory, it's all open source and modification is encouraged to fit your own needs and build it however you like, it's free and open source and modular that's the main goal and on top of that it's also gonna be a smart personal assistant, cool right?
+# 7) update with command execution - I listened to the risk, and improved the updater, any software have an updater, this one is NOT automatic and has to be manually triggered by the user, the updater will now show an explicit allow / skip / cancel dialog before running any patch commands, there is no silent arbitrary execution, it all has to be manually invoked and approved by the user, especially in the new version.
+#
+# Why don't I just code sign? well I don't have a budget for an EV code signing certificates (really expensive) so I ship a powershell installer and make it open source instead of a signed exe. the entire installer is reproducible from source via the build.ps1 file in the repo, if you see anything that looks wrong, please open an issue on GitHub, Thanks!
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPUTER (Completely Open Modular Program Under Trusted Execution Rules) is
+# a fully open-source modular AI hub.  Every line of this installer is public:
+#   https://github.com/burgil-industries/computer
+#
+# This file may trigger heuristic warnings in antivirus products because it
+# uses several techniques that are also found in malware.  Each is explained
+# below so you can verify the intent yourself.
+#
+# WHY THIS SCRIPT LAUNCHES A HIDDEN POWERSHELL WINDOW
+#   A graphical installer (WinForms) cannot coexist cleanly with a visible
+#   console window.  The first run shows an ASCII progress bar in the console
+#   while the WinForms wizard loads in a hidden process.  Once the wizard is
+#   ready the console exits.  The hidden flag is for UX (no black terminal
+#   behind the wizard), NOT to evade detection.  Source: lines below labelled
+#   "Credits splash + relaunch as hidden process".
+#
+# WHY THIS SCRIPT COPIES ITSELF TO %TEMP%
+#   The installer is split into two phases to avoid showing both a console
+#   window and a GUI window at the same time.  Phase 1 (the original process)
+#   shows an ASCII loading screen in the console.  It launches Phase 2 as a
+#   hidden process (the WinForms wizard) and then exits — so the user only
+#   ever sees one window.  To launch a new PowerShell process you need a file
+#   path, so the script copies itself to %TEMP% first.  When already running
+#   from a file on disk (PSCommandPath is set) it just copies that file;
+#   when piped via `iex` it writes its own source text to the temp path.
+#   The temp file is referenced by $script:setupTmp and only serves this
+#   purpose — it is not used to persist anything after the installer exits.
+#
+# WHY THIS SCRIPT IMPORTS kernel32.dll / user32.dll
+#   The installer draws a fully custom dark-themed UI (DarkButton,
+#   DarkProgressBar, dark title bar).  These controls are compiled from C#
+#   source (installer/controls/) and require P/Invoke calls to:
+#     GetConsoleWindow / ShowWindow  - hide the console once the wizard opens
+#     GetWindowLong / SetWindowLong  - enable dark-mode title bar (DWMWA)
+#     SendMessage                    - send WM_DWMCOLORIZATIONCHANGED to apply
+#   None of these calls are used for process injection, keylogging, or any
+#   other malicious purpose.
+#
+# WHY THIS SCRIPT REGISTERS REGISTRY KEYS
+#   All registry writes are in HKCU (current user only, no admin required).
+#   They cover standard installer operations: Add/Remove Programs entry,
+#   optional URI scheme (computer://), optional file type (.computer), and
+#   optional right-click menu — all gated behind user-visible checkboxes on
+#   the Confirm page and all reversible by the included Uninstaller.
+#
+# WHY VBS FILES LAUNCH POWERSHELL
+#   check-update.vbs, repair.vbs, uninstall.vbs, router.vbs use WScript to
+#   invoke PowerShell.  VBS is used as a thin launcher so double-clicking a
+#   shortcut does not flash a console window.  The PowerShell scripts they
+#   invoke are plain-text files written to the install directory that you can
+#   read at any time.
+#
+# OPEN SOURCE AUDIT
+#   Full source, build instructions, and change history are at:
+#   https://github.com/burgil-industries/computer
+#   The generated install.ps1 is reproducible from source via .\build.ps1.
+# ─────────────────────────────────────────────────────────────────────────────
 
 $APP_NAME      = "C.O.M.P.U.T.E.R."
 $APP_NAME_LOW  = $APP_NAME.ToLower()
+$APP_PROTO     = $APP_NAME_LOW -replace '\.', ''
 $APP_VERSION   = "1.0.0"
 
 # --- Credits splash + relaunch as hidden process ----------------------------
@@ -12,8 +91,14 @@ $APP_VERSION   = "1.0.0"
 if (-not $env:COMPUTER_SETUP_HEADLESS) {
     $env:COMPUTER_SETUP_HEADLESS = "1"
 
-    # Launch the hidden installer immediately so it loads while credits are shown
-    $tmp = "$env:TEMP\computer_setup_launch.ps1"
+    # Phase 1 -> Phase 2 handoff.
+    # Copy self to %TEMP% so we have a file path to pass to the new process,
+    # then start it hidden.  The current (console) process shows the loading
+    # screen while Phase 2 initialises, then exits — leaving only the GUI
+    # window visible.  The hidden flag prevents a second terminal from
+    # appearing behind the wizard; the process is still visible in Task Manager.
+    $script:setupTmp = "$env:TEMP\computer_setup_launch.ps1"
+    $tmp = $script:setupTmp
     if ($PSCommandPath) {
         Copy-Item $PSCommandPath $tmp -Force -ErrorAction SilentlyContinue
     } else {
@@ -42,9 +127,11 @@ if (-not $env:COMPUTER_SETUP_HEADLESS) {
     }
     Write-Host "`r  Setup Wizard Loading...  [$('=' * 40)] 100%   " -ForegroundColor Green
     Write-Host ""
+    $env:COMPUTER_SETUP_HEADLESS = $null
     exit
 }
-$env:COMPUTER_SETUP_HEADLESS = ""   # reset for future runs in this session
+Remove-Item Env:COMPUTER_SETUP_HEADLESS -ErrorAction SilentlyContinue
+$script:setupTmp = "$env:TEMP\computer_setup_launch.ps1"
 $ICON_URL      = "http://localhost:3000/favicon.ico"
 $UPDATE_URL    = "http://localhost:3000/updates"
 $AD_URL        = "http://localhost:3000/ads/softwisor.com.png"   # URL to a 480x82 banner image - leave empty to show placeholder
@@ -70,6 +157,11 @@ function Write-Log {
 ("=" * 60) | Add-Content -Path $script:_logPath -Encoding UTF8
 Write-Log "$APP_NAME $APP_VERSION  launched"
 
+# P/Invoke signatures used exclusively for UI purposes:
+#   GetConsoleWindow + ShowWindow  -> hide the console once the WinForms wizard is visible
+#   GetWindowLong + SetWindowLong  -> enable Windows 11 dark-mode title bar (DWMWA_USE_IMMERSIVE_DARK_MODE)
+#   SendMessage                    -> broadcast WM_DWMCOLORIZATIONCHANGED so the dark title bar applies
+# These are standard WinForms dark-mode techniques, not process injection or evasion.
 if (-not ([System.Management.Automation.PSTypeName]'ConsoleUtils.Window').Type) {
     Add-Type -Name Window -Namespace ConsoleUtils -MemberDefinition @"
 [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
@@ -85,6 +177,9 @@ try { [Console]::TreatControlCAsInput = $true } catch {}
 # (consent is handled by the wizard's License and Legal Notices pages)
 
 # --- Single-instance check (named mutex) -----------
+# Prevents two copies of the installer from running at the same time.
+# Named mutex is the standard Windows mechanism for this; the name is
+# scoped to this application and does not affect any other process.
 $script:_mutex = New-Object System.Threading.Mutex($false, "Global\$($APP_NAME)_Setup_Mutex")
 if (-not $script:_mutex.WaitOne(0, $false)) {
     Add-Type -AssemblyName System.Windows.Forms
@@ -119,6 +214,12 @@ if ($ICON_URL) {
     }
 }
 # --- Custom controls: DarkButton + GlowProgressBar + DarkMode ----------------
+# Add-Type compiles C# source at runtime to create custom WinForms controls.
+# This is standard PowerShell WinForms practice for controls that System.Windows.Forms
+# does not provide natively (dark-themed button with hover/press states, animated
+# progress bar, dark title bar helper).
+# The compiled types exist only in the current PowerShell session and are not
+# written to disk or injected into any other process.
 $refs = @(
     [System.Reflection.Assembly]::GetAssembly([System.Windows.Forms.Control]).Location,
     [System.Reflection.Assembly]::GetAssembly([System.Drawing.Graphics]).Location
@@ -1819,6 +1920,9 @@ $form.Add_FormClosed({
     if (Test-Path $script:iconTemp) {
         Remove-Item $script:iconTemp -Force -ErrorAction SilentlyContinue
     }
+    if ($script:setupTmp -and (Test-Path $script:setupTmp)) {
+        Remove-Item $script:setupTmp -Force -ErrorAction SilentlyContinue
+    }
 })
 
 # --- Header: y=0, h=80 ----
@@ -2366,7 +2470,7 @@ $lblConfDirV   = New-Label ""              172 106 326 18 9 Regular $C_TEXT
 $lblConfScL    = New-Label "Shortcut :"     30 128 134 18 9 Bold    $C_DIM
 $lblConfScV    = New-Label ""              172 128 326 18 9 Regular $C_TEXT
 $lblConfProtoL = New-Label "Protocol :"     30 150 134 18 9 Bold    $C_DIM
-$lblConfProtoV = New-Label "$($APP_NAME_LOW)://"        172 150 326 18 9 Regular $C_ACCENT
+$lblConfProtoV = New-Label "$($APP_PROTO)://"        172 150 326 18 9 Regular $C_ACCENT
 $lblConfUninL  = New-Label "Uninstaller :"  30 172 134 18 9 Bold    $C_DIM
 $lblConfUninV  = New-Label "Yes (Add/Remove Programs)" 172 172 326 18 9 Regular $C_SUCCESS
 
@@ -2411,9 +2515,10 @@ $chkAddPath   = New-OptChk "Add to Path"             0   24
 $chkStartMenu = New-OptChk "Start Menu shortcut"     240 24
 $chkOpenWith  = New-OptChk "Right-click menu"        0   46
 $chkFileAssoc = New-OptChk "File type (.computer)"        240 46
+$chkProto     = New-OptChk "App protocol ($($APP_PROTO)://)" 0   68
 $chkNewMenu   = New-OptChk "New menu (.computer)"         240 68
 
-$pnlAdvanced.Controls.AddRange(@($chkStartup, $chkSendTo, $chkAddPath, $chkStartMenu, $chkOpenWith, $chkFileAssoc, $chkNewMenu))
+$pnlAdvanced.Controls.AddRange(@($chkStartup, $chkSendTo, $chkAddPath, $chkStartMenu, $chkOpenWith, $chkFileAssoc, $chkProto, $chkNewMenu))
 
 # New menu requires file type - disable it when file type is unchecked
 $chkFileAssoc.Add_CheckedChanged({
@@ -2439,6 +2544,7 @@ $optTip.SetToolTip($chkSendTo,    "Add 'Send to $APP_NAME' to the right-click Se
 $optTip.SetToolTip($chkAddPath,   "Add $APP_NAME to PATH so you can run '$APP_NAME_LOW' from any terminal")
 $optTip.SetToolTip($chkStartMenu, "Create a $APP_NAME shortcut in the Windows Start Menu")
 $optTip.SetToolTip($chkOpenWith,  "Add 'Open with $APP_NAME' to the right-click menu for files and folders")
+$optTip.SetToolTip($chkProto,     "Register the $($APP_PROTO):// URI scheme so links and scripts can open $APP_NAME")
 $optTip.SetToolTip($chkFileAssoc, "Open .computer files with $APP_NAME on double-click")
 $optTip.SetToolTip($chkNewMenu,   "Add 'New > $APP_NAME File (.computer)' to the right-click New submenu (requires File type)")
 
@@ -2998,9 +3104,24 @@ $btnApplyUpdate.Add_Click({
                             if (Test-Path $target) { Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue }
                         }
                         'run' {
+                            # 'run' executes a shell command from the patch manifest.
+                            # Intended for post-patch migration steps (e.g. database
+                            # schema upgrades, one-time data conversions).
+                            # The user must explicitly approve each command before it runs.
                             $wd = if ($act.workdir -eq '.') { $dir } else { Join-Path $dir $act.workdir }
-                            Write-Log "  run: $($act.command)  (workdir: $wd)"
-                            Start-Process cmd.exe -ArgumentList "/c $($act.command)" -WorkingDirectory $wd -Wait -WindowStyle Hidden
+                            $label = if ($act.label) { $act.label } else { $act.command }
+                            $choice = Show-Dialog "Run Update Step" (
+                                "Patch v$($patch.version) wants to run a command:`n`n" +
+                                "  $label`n`n" +
+                                "Working directory: $wd`n`n" +
+                                "Allow this step?") @("Allow", "Skip", "Cancel")
+                            if ($choice -eq "Cancel") { throw "Update cancelled by user at 'run' step: $($act.command)" }
+                            if ($choice -eq "Allow") {
+                                Write-Log "  run (approved): $($act.command)  (workdir: $wd)"
+                                Start-Process cmd.exe -ArgumentList "/c $($act.command)" -WorkingDirectory $wd -Wait -WindowStyle Hidden
+                            } else {
+                                Write-Log "  run (skipped by user): $($act.command)"
+                            }
                         }
                     }
                     [System.Windows.Forms.Application]::DoEvents()
@@ -3182,6 +3303,11 @@ public class ShellNotify {
     }
 }
 # --- Installation ---------
+# This function performs all install steps sequentially.  Every step that
+# touches the registry, file system, or shell integration is explained inline.
+# All registry writes go to HKCU (current user) — no admin rights required.
+# All optional features (startup, PATH, right-click, etc.) are gated behind
+# checkboxes the user sees and controls on the Confirm page (04-confirm.ps1).
 function Start-Installation {
     $dir    = $txtDir.Text.TrimEnd('.')
     $data   = "$dir\data"
@@ -3191,7 +3317,10 @@ function Start-Installation {
 
     if (Test-Path $dir) { Clear-InstallAttributes $dir }
 
-    # Pre-compile the shell-notify type so Add-Type doesn't stall mid-install
+    # Pre-compile the shell-notify type so Add-Type doesn't stall mid-install.
+    # SHChangeNotify (shell32.dll) is the documented Windows API for telling
+    # Explorer that file type or icon associations have changed.  Without it
+    # the user must log off and back on before new icons/context menus appear.
     if (-not ([System.Management.Automation.PSTypeName]'ShellNotify').Type) {
         Add-Type @"
 using System;
@@ -3222,6 +3351,11 @@ public class ShellNotify {
 
         @{ Pct = 20; Msg = "Saving installer...";
            Action = {
+               # A copy of install.ps1 is saved to the install directory so the
+               # Repair and Check-for-Updates shortcuts can re-run the installer
+               # without requiring the user to re-download it.  This is the same
+               # practice used by traditional Windows installers (e.g. setup.exe
+               # saved to %ProgramFiles%\AppName\).
                if ($script:_selfPath -and (Test-Path $script:_selfPath)) {
                    Write-Log "Installer: copying from file $script:_selfPath"
                    Copy-Item $script:_selfPath "$lib\install.ps1" -Force
@@ -3235,6 +3369,12 @@ public class ShellNotify {
 
         @{ Pct = 42; Msg = "Writing files...";
            Action = {
+               # $FILE_MANIFEST is populated at build time by {{EMBED_DIR:app/}} —
+               # every file under app/ is embedded as a here-string variable and
+               # extracted here.  .vbs and .cmd files are written as ASCII because
+               # WScript / cmd.exe do not handle UTF-8 BOM gracefully.
+               # Placeholders __APP_NAME__, __APP_VERSION__, __UPDATE_URL__ are
+               # substituted so embedded scripts know which app they belong to.
                foreach ($entry in $FILE_MANIFEST.GetEnumerator()) {
                    $relDest  = $entry.Key -replace '__APP_NAME__', $APP_NAME
                    $destPath = Join-Path $dir ($relDest.Replace('/', '\'))
@@ -3309,21 +3449,33 @@ public class ShellNotify {
                }
            }},
 
-        @{ Pct = 87; Msg = "Registering $($APP_NAME_LOW):// protocol...";
+        @{ Pct = 87; Msg = "Registering $($APP_PROTO):// protocol...";
            Action = {
-               $protoKey = "HKCU:\SOFTWARE\Classes\$APP_NAME_LOW"
-               New-Item -Path $protoKey -Value "URL:$APP_NAME Protocol" -Force | Out-Null
-               New-ItemProperty -Path $protoKey -Name "URL Protocol" -Value "" -PropertyType String -Force | Out-Null
-               # Friendly name shown in protocol confirmation dialogs (when respected by the browser)
-               New-Item -Path "$protoKey\Application" -Force | Out-Null
-               New-ItemProperty -Path "$protoKey\Application" -Name "ApplicationName" -Value $APP_NAME -PropertyType String -Force | Out-Null
-               New-ItemProperty -Path "$protoKey\Application" -Name "ApplicationDescription" -Value "$APP_NAME Protocol Handler" -PropertyType String -Force | Out-Null
-               $cmd = "wscript.exe `"$lib\router.vbs`" `"%1`""
-               New-Item -Path "$protoKey\shell\open\command" -Value $cmd -Force | Out-Null
+               # URI scheme registration (e.g. computer://) lets links in browsers
+               # and scripts open COMPUTER directly.  Written to HKCU\SOFTWARE\Classes
+               # (current-user scope, no admin required).  Only registered when the
+               # user checks "App protocol" on the Confirm page.
+               if ($chkProto.Checked) {
+                   $protoKey = "HKCU:\SOFTWARE\Classes\$APP_PROTO"
+                   New-Item -Path $protoKey -Value "URL:$APP_NAME Protocol" -Force | Out-Null
+                   New-ItemProperty -Path $protoKey -Name "URL Protocol" -Value "" -PropertyType String -Force | Out-Null
+                   # Friendly name shown in protocol confirmation dialogs (when respected by the browser)
+                   New-Item -Path "$protoKey\Application" -Force | Out-Null
+                   New-ItemProperty -Path "$protoKey\Application" -Name "ApplicationName" -Value $APP_NAME -PropertyType String -Force | Out-Null
+                   New-ItemProperty -Path "$protoKey\Application" -Name "ApplicationDescription" -Value "$APP_NAME Protocol Handler" -PropertyType String -Force | Out-Null
+                   $cmd = "wscript.exe `"$lib\router.vbs`" `"%1`""
+                   New-Item -Path "$protoKey\shell\open\command" -Value $cmd -Force | Out-Null
+               } else {
+                   Write-Log "Protocol: skipping ($($APP_PROTO)://)"
+               }
            }},
 
         @{ Pct = 94; Msg = "Registering uninstaller...";
            Action = {
+               # Adds COMPUTER to Add/Remove Programs (HKCU uninstall key).
+               # Uses HKCU so no admin rights are needed.  The UninstallString
+               # points to uninstall.vbs in the install directory — a plain-text
+               # script the user can read and audit at any time.
                $key = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$APP_NAME"
                New-Item -Path $key -Force | Out-Null
                $props = @{
@@ -3345,6 +3497,10 @@ public class ShellNotify {
 
         @{ Pct = 88; Msg = "Applying optional features (1/7): Run on startup...";
            Action = {
+               # Startup shortcut — only created when $chkStartup.Checked is true
+               # (user explicitly opted in on the Confirm page).  Uses the standard
+               # Startup folder (%APPDATA%\...\Startup), not the Run registry key,
+               # so it is visible and removable via Task Manager > Startup tab.
                $startupLnk = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\$APP_NAME.lnk"
                Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $APP_NAME -ErrorAction SilentlyContinue
                if ($chkStartup.Checked) {
@@ -3383,8 +3539,8 @@ public class ShellNotify {
         @{ Pct = 91; Msg = "Applying optional features (3/7): Right-click menu...";
            Action = {
                $ico    = "$assets\$APP_NAME_LOW.ico"
-               $cmd    = "wscript.exe `"$lib\router.vbs`" `"$($APP_NAME_LOW)://open?path=%1`""
-               $cmdDir = "wscript.exe `"$lib\router.vbs`" `"$($APP_NAME_LOW)://open?path=%V`""
+               $cmd    = "wscript.exe `"$lib\router.vbs`" `"$($APP_PROTO)://open?path=%1`""
+               $cmdDir = "wscript.exe `"$lib\router.vbs`" `"$($APP_PROTO)://open?path=%V`""
                if ($chkOpenWith.Checked) {
                    Write-Log "Right-click menu: registering"
                    $hkcu = [Microsoft.Win32.Registry]::CurrentUser
@@ -3453,7 +3609,7 @@ public class ShellNotify {
                    $k = $hkcu.CreateSubKey("SOFTWARE\Classes\$APP_NAME.File\DefaultIcon")
                    $k.SetValue("", "$assets\$APP_NAME_LOW.ico,0"); $k.Close()
                    $k = $hkcu.CreateSubKey("SOFTWARE\Classes\$APP_NAME.File\shell\open\command")
-                   $k.SetValue("", "wscript.exe `"$lib\router.vbs`" `"$($APP_NAME_LOW)://open?path=%1`""); $k.Close()
+                   $k.SetValue("", "wscript.exe `"$lib\router.vbs`" `"$($APP_PROTO)://open?path=%1`""); $k.Close()
                } else {
                    Write-Log "File assoc: removing .$APP_NAME_LOW"
                    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$APP_NAME_LOW" -Recurse -Force -ErrorAction SilentlyContinue
@@ -3478,6 +3634,9 @@ public class ShellNotify {
 
         @{ Pct = 96; Msg = "Refreshing shell...";
            Action = {
+               # SHCNE_ASSOCCHANGED (0x08000000) tells Explorer to refresh its
+               # file-type icon and context-menu cache.  This is the documented,
+               # recommended way to apply file-association changes without a reboot.
                [ShellNotify]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
                Write-Log "Shell cache flushed (SHChangeNotify)"
            }},
