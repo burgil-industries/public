@@ -1053,6 +1053,7 @@ sh.Run cmd, 0, False
 $FILE_DATA_SRC_APP_JS = @'
 'use strict';
 const path = require('path');
+const http = require('http');
 const { PluginVM } = require('./vm');
 
 // __dirname = <install_dir>/data/src/
@@ -1065,6 +1066,16 @@ const vm = new PluginVM({
     appName    : 'Computer',
     appVersion : '1.0.0',
 });
+
+// Heartbeat server on port 53420 - lets the installer/updater detect that
+// the app is running via Test-ComputerRunning (checks TCP listeners on 53420).
+http.createServer((_req, res) => { res.writeHead(200); res.end('ok'); })
+    .listen(53420, '127.0.0.1', () => console.log('[app] heartbeat on 127.0.0.1:53420'))
+    .on('error', err => {
+        if (err.code === 'EADDRINUSE') {
+            console.warn('[app] port 53420 already in use - another instance may be running');
+        }
+    });
 
 vm.loadAll().catch(err => {
     console.error('[app] fatal:', err.message);
@@ -1098,7 +1109,6 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
     --text-muted:  #64748b;
     --text-dim:    #94a3b8;
     --green:       #10b981;
-    --green-dim:   #065f46;
     --mono:        'Cascadia Code', 'Consolas', monospace;
   }
 
@@ -1112,43 +1122,39 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
     user-select: none;
   }
 
-  body {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
+  body { display: flex; flex-direction: column; overflow: hidden; }
 
   /* ── Header ─────────────────────────────────────────────────────────── */
   .header {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    padding: 22px 24px 20px;
+    padding: 13px 18px 11px;
     flex-shrink: 0;
   }
 
   .app-tag {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     letter-spacing: .06em;
     text-transform: uppercase;
     color: var(--text-muted);
-    margin-bottom: 12px;
+    margin-bottom: 8px;
   }
 
   .plugin-row {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 10px;
   }
 
   .plugin-avatar {
-    width: 44px;
-    height: 44px;
-    border-radius: 12px;
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 20px;
+    font-size: 17px;
     font-weight: 700;
     flex-shrink: 0;
     border: 1px solid var(--border);
@@ -1159,41 +1165,59 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
   .plugin-name-line {
     display: flex;
     align-items: baseline;
-    gap: 8px;
+    gap: 7px;
     flex-wrap: wrap;
   }
 
   .plugin-name {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--text);
     white-space: nowrap;
   }
 
   .plugin-version {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted);
     background: var(--surface-3);
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 1px 6px;
+    padding: 1px 5px;
     flex-shrink: 0;
   }
 
   .plugin-desc {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted);
-    margin-top: 4px;
+    margin-top: 3px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* ── Bundle plugin pills ─────────────────────────────────────────────── */
+  .plugin-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .pill {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    background: var(--surface-3);
   }
 
   /* ── Permission list ─────────────────────────────────────────────────── */
   .body {
     flex: 1;
     overflow-y: auto;
-    padding: 18px 24px 12px;
+    padding: 11px 18px 8px;
     scrollbar-width: thin;
     scrollbar-color: var(--surface-3) transparent;
   }
@@ -1208,31 +1232,42 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
     letter-spacing: .08em;
     text-transform: uppercase;
     color: var(--text-muted);
-    margin-bottom: 10px;
+    margin-bottom: 7px;
+  }
+
+  .group-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 8px 0 5px;
+    padding: 0 2px;
+    opacity: .75;
   }
 
   .perm-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 5px;
   }
 
   .perm-item {
     display: flex;
     align-items: flex-start;
-    gap: 12px;
+    gap: 10px;
     background: var(--surface-2);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px 14px;
+    border-radius: 9px;
+    padding: 9px 12px;
     transition: border-color .15s;
   }
 
   .perm-item:hover { border-color: #333344; }
 
   .perm-icon {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
     flex-shrink: 0;
     margin-top: 1px;
     color: var(--text-dim);
@@ -1240,26 +1275,26 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
     align-items: center;
     justify-content: center;
   }
-  .perm-icon svg { width: 18px; height: 18px; }
+  .perm-icon svg { width: 16px; height: 16px; }
 
   .perm-text { flex: 1; min-width: 0; }
 
   .perm-label {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text);
   }
 
   .perm-scope {
     font-family: var(--mono);
-    font-size: 10.5px;
+    font-size: 10px;
     color: var(--text-muted);
-    margin-top: 4px;
+    margin-top: 3px;
     word-break: break-all;
     line-height: 1.5;
     background: var(--surface-3);
     border-radius: 4px;
-    padding: 3px 6px;
+    padding: 2px 5px;
     display: inline-block;
     max-width: 100%;
   }
@@ -1267,9 +1302,9 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
   /* ── Footer ──────────────────────────────────────────────────────────── */
   .footer {
     border-top: 1px solid var(--border);
-    padding: 14px 24px 16px;
+    padding: 10px 18px 12px;
     display: flex;
-    gap: 10px;
+    gap: 8px;
     justify-content: flex-end;
     flex-shrink: 0;
     background: var(--surface);
@@ -1277,9 +1312,9 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
 
   button {
     border: none;
-    border-radius: 8px;
-    padding: 9px 22px;
-    font-size: 13px;
+    border-radius: 7px;
+    padding: 8px 20px;
+    font-size: 12px;
     font-weight: 600;
     font-family: inherit;
     cursor: pointer;
@@ -1312,14 +1347,14 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
     align-items: center;
     justify-content: center;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     animation: fadein .2s ease;
   }
 
   .done-overlay.show { display: flex; }
 
   .done-icon { display: flex; align-items: center; justify-content: center; }
-  .done-text { font-size: 14px; color: var(--text-muted); }
+  .done-text { font-size: 13px; color: var(--text-muted); }
 
   @keyframes fadein {
     from { opacity: 0; }
@@ -1329,7 +1364,7 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
 </head>
 <body>
 
-<!-- Plugin data injected by the vm.js HTTP server -->
+<!-- Plugin / bundle data injected by the vm.js HTTP server -->
 <script id="d" type="application/json">__PLUGIN_DATA__</script>
 
 <div class="header">
@@ -1342,6 +1377,7 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
         <span class="plugin-version" id="pver"></span>
       </div>
       <div class="plugin-desc" id="pdesc"></div>
+      <div class="plugin-pills" id="ppills" style="display:none"></div>
     </div>
   </div>
 </div>
@@ -1359,7 +1395,7 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
 <div class="done-overlay" id="done"></div>
 
 <script>
-// Inline SVG icons — pure ASCII, no encoding issues
+// Inline SVG icons - pure ASCII, no encoding issues
 const SVG = (d, extra) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"${extra ? ' ' + extra : ''}>${d}</svg>`;
 
@@ -1388,6 +1424,36 @@ const AVATAR_COLORS = [
   ['#3b2a10','#fbbf24'], ['#3b1a1a','#f87171'], ['#1a2f3b','#38bdf8'],
 ];
 
+// Shorten long paths to last 3 segments, e.g. C:\...\data\plugins\example
+function truncateScope(scope) {
+  if (scope.length <= 44) return scope;
+  const hasBs = scope.includes('\\');
+  const sep = hasBs ? '\\' : (scope.includes('/') ? '/' : null);
+  if (!sep) return scope;
+  const parts = scope.split(sep).filter(Boolean);
+  if (parts.length <= 3) return scope;
+  return '...' + sep + parts.slice(-3).join(sep);
+}
+
+function renderPerm(perm, container) {
+  const colon = perm.indexOf(':');
+  const base  = colon === -1 ? perm : perm.slice(0, colon);
+  const scope = colon === -1 ? null  : perm.slice(colon + 1);
+
+  const icon = ICONS[base] || DEFAULT_ICON;
+  const desc = PERM_DESCRIPTIONS[base] || base;
+
+  const item = document.createElement('div');
+  item.className = 'perm-item';
+  item.innerHTML =
+    `<span class="perm-icon">${icon}</span>` +
+    `<div class="perm-text">` +
+      `<div class="perm-label">${desc}</div>` +
+      (scope ? `<div class="perm-scope">${truncateScope(scope)}</div>` : '') +
+    `</div>`;
+  container.appendChild(item);
+}
+
 const data = JSON.parse(document.getElementById('d').textContent);
 const PERM_DESCRIPTIONS = data.permDescriptions;
 
@@ -1404,25 +1470,35 @@ av.style.background = AVATAR_COLORS[ci][0];
 av.style.color      = AVATAR_COLORS[ci][1];
 av.textContent      = (data.name[0] || '?').toUpperCase();
 
-// Permission list
 const list = document.getElementById('perm-list');
-for (const perm of data.permissions) {
-  const colon = perm.indexOf(':');
-  const base  = colon === -1 ? perm : perm.slice(0, colon);
-  const scope = colon === -1 ? null  : perm.slice(colon + 1);
 
-  const icon = ICONS[base] || DEFAULT_ICON;
-  const desc = PERM_DESCRIPTIONS[base] || base;
+if (data.type === 'bundle') {
+  // Show member plugin pills under the bundle name
+  const pillsEl = document.getElementById('ppills');
+  pillsEl.style.display = '';
+  for (const p of data.plugins) {
+    const pill = document.createElement('span');
+    pill.className = 'pill';
+    pill.textContent = p.name;
+    pillsEl.appendChild(pill);
+  }
 
-  const item = document.createElement('div');
-  item.className = 'perm-item';
-  item.innerHTML =
-    `<span class="perm-icon">${icon}</span>` +
-    `<div class="perm-text">` +
-      `<div class="perm-label">${desc}</div>` +
-      (scope ? `<div class="perm-scope">${scope}</div>` : '') +
-    `</div>`;
-  list.appendChild(item);
+  // Render permissions grouped by member plugin
+  for (const plugin of data.plugins) {
+    if (!plugin.permissions || plugin.permissions.length === 0) continue;
+    const grp = document.createElement('div');
+    grp.className = 'group-label';
+    grp.textContent = plugin.name;
+    list.appendChild(grp);
+    for (const perm of plugin.permissions) {
+      renderPerm(perm, list);
+    }
+  }
+} else {
+  // Single plugin - flat list
+  for (const perm of data.permissions) {
+    renderPerm(perm, list);
+  }
 }
 
 async function answer(granted) {
@@ -1489,15 +1565,15 @@ class PluginVM {
         this.appName     = options.appName    || 'Computer';
         this.appVersion  = options.appVersion || '1.0.0';
         this._services   = new Map();   // name -> value (provided by plugins)
-        this._loaded     = [];          // plugin IDs loaded in this session
+        this._loaded     = [];          // plugin/bundle IDs loaded in this session
         this._syncing    = false;       // mutex: prevents concurrent _syncPlugins calls
     }
 
     // -- Plugin cache (data/plugins-cache.json) --------------------------------
-    // Tracks per-plugin status across restarts so denied/broken plugins aren't
-    // re-prompted on every launch — only after a drag-out + drag-back.
+    // Tracks per-plugin/bundle status across restarts so denied/broken items
+    // aren't re-prompted on every launch - only after a drag-out + drag-back.
     //
-    // Schema: { [id]: { status: "loaded"|"denied"|"error"|"removed", folder?: string, error?: string } }
+    // Schema: { [id]: { status: "loaded"|"denied"|"error"|"removed", folder?: string, type?: "bundle" } }
 
     _cacheFile() {
         return path.join(this.dataDir, 'plugins-cache.json');
@@ -1544,7 +1620,7 @@ class PluginVM {
         return candidates.find(p => { try { fs.accessSync(p); return true; } catch (_) { return false; } }) || null;
     }
 
-    _openBrowser(url, w = 420, h = 480) {
+    _openBrowser(url, w = 420, h = 380) {
         const edge = this._findEdge();
         if (edge) {
             spawn(edge, [
@@ -1562,43 +1638,32 @@ class PluginVM {
     /**
      * Show the permission dialog in Edge and resolve when the user responds
      * or closes the window.
+     *
+     * @param {object} dialogData  - Fully-formed data object injected into dialog.html
+     * @param {number} [winW=420]
+     * @param {number} [winH=380]
      * @returns {Promise<boolean>} true = granted, false = denied/closed
      */
-    _showPermDialog(meta, requested) {
-        // Height: header(115) + body padding/label(50) + items(68 each) + footer(66) + chrome(36)
-        const winH = Math.min(Math.max(267 + requested.length * 68, 380), 560);
-        const winW = 420;
-
+    _showPermDialog(dialogData, winW = 420, winH = 380) {
         // App icon served as /favicon.ico
         const iconPath = path.join(this.dataDir, 'assets', `${this.appName.toLowerCase()}.ico`);
 
         return new Promise((resolve) => {
             const htmlTemplate = fs.readFileSync(path.join(__dirname, 'dialog.html'), 'utf8');
-
-            const pluginData = JSON.stringify({
-                appName         : this.appName,
-                name            : meta.name    || meta.id,
-                version         : meta.version || '',
-                description     : meta.description || '',
-                permissions     : requested,
-                permDescriptions: PERM_DESCRIPTIONS,
-            });
-
-            const html = htmlTemplate.replace('__PLUGIN_DATA__', pluginData);
+            const html = htmlTemplate.replace('__PLUGIN_DATA__', JSON.stringify(dialogData));
 
             let settled = false;
             const settle = (granted) => {
                 if (settled) return;
                 settled = true;
                 clearTimeout(timeout);
-                // Stop accepting new connections; existing ones drain naturally
                 server.close();
                 resolve(granted);
             };
 
             // Auto-deny if the user never responds (e.g. killed the process)
             const timeout = setTimeout(() => {
-                console.warn(`[vm] permission dialog timed out for "${meta.id}" — denying`);
+                console.warn(`[vm] permission dialog timed out for "${dialogData.name}" - denying`);
                 settle(false);
             }, 2 * 60 * 1000);
 
@@ -1665,7 +1730,7 @@ class PluginVM {
         });
     }
 
-    // -- Permission check (load saved or prompt) --------------------------------
+    // -- Permission check for a single plugin (load saved or prompt) -----------
 
     async _checkPermissions(pluginId, meta, requested) {
         if (!requested || requested.length === 0) return new Set();
@@ -1673,7 +1738,20 @@ class PluginVM {
         const saved = this._loadSavedPerms(pluginId);
         if (saved !== null) return saved;   // already decided
 
-        const granted = await this._showPermDialog(meta, requested);
+        // Height: header(90) + section(28) + items(54 each) + footer(52) + chrome(36)
+        const winH = Math.min(Math.max(206 + requested.length * 54, 290), 500);
+
+        const dialogData = {
+            type            : 'plugin',
+            appName         : this.appName,
+            name            : meta.name    || meta.id,
+            version         : meta.version || '',
+            description     : meta.description || '',
+            permissions     : requested,
+            permDescriptions: PERM_DESCRIPTIONS,
+        };
+
+        const granted = await this._showPermDialog(dialogData, 420, winH);
         if (!granted) {
             throw new Error(`[vm] Permission denied by user for plugin "${pluginId}"`);
         }
@@ -1681,6 +1759,101 @@ class PluginVM {
         const perms = new Set(requested);
         this._savePerms(pluginId, perms);
         return perms;
+    }
+
+    // -- Bundle permission check (merged dialog for all members) ---------------
+
+    async _checkBundlePermissions(bundleMeta, memberMetas) {
+        // Only show the dialog if at least one member is missing saved perms
+        const anyMissing = memberMetas.some(meta => {
+            const requested = (meta.permissions || []).map(p =>
+                p.replace('${dataDir}', this.dataDir)
+            );
+            return requested.length > 0 && this._loadSavedPerms(meta.id) === null;
+        });
+
+        if (!anyMissing) return true;   // all already decided - silent load
+
+        // Build groups for the dialog
+        const groups = memberMetas
+            .map(meta => ({
+                id          : meta.id,
+                name        : meta.name || meta.id,
+                permissions : (meta.permissions || []).map(p =>
+                    p.replace('${dataDir}', this.dataDir)
+                ),
+            }))
+            .filter(g => g.permissions.length > 0);
+
+        const totalPerms   = groups.reduce((n, g) => n + g.permissions.length, 0);
+        const groupHeaders = groups.length;
+        const winH = Math.min(Math.max(206 + totalPerms * 54 + groupHeaders * 26, 290), 520);
+
+        const dialogData = {
+            type            : 'bundle',
+            appName         : this.appName,
+            name            : bundleMeta.name    || bundleMeta.id,
+            version         : bundleMeta.version || '',
+            description     : bundleMeta.description || '',
+            plugins         : groups,
+            permDescriptions: PERM_DESCRIPTIONS,
+        };
+
+        const granted = await this._showPermDialog(dialogData, 440, winH);
+        if (!granted) return false;
+
+        // Save permissions for every member
+        for (const meta of memberMetas) {
+            const requested = (meta.permissions || []).map(p =>
+                p.replace('${dataDir}', this.dataDir)
+            );
+            this._savePerms(meta.id, new Set(requested));
+        }
+        return true;
+    }
+
+    // -- Load a bundle (show merged dialog, then load each member) -------------
+
+    async _loadBundle(bundleMeta, allPluginManifests, cache) {
+        const memberIds = bundleMeta.plugins || [];
+        const memberMetas = [];
+
+        for (const id of memberIds) {
+            const meta = allPluginManifests[id];
+            if (!meta) {
+                console.warn(`[vm] bundle "${bundleMeta.id}" member "${id}" not found in plugins folder`);
+                continue;
+            }
+            memberMetas.push(meta);
+        }
+
+        if (memberMetas.length === 0) {
+            console.warn(`[vm] bundle "${bundleMeta.id}" has no loadable members`);
+            return;
+        }
+
+        console.log(`[vm] loading bundle "${bundleMeta.id}" (${memberMetas.map(m => m.id).join(', ')})`);
+
+        const granted = await this._checkBundlePermissions(bundleMeta, memberMetas);
+        if (!granted) {
+            // Mark each member denied in cache too
+            for (const meta of memberMetas) {
+                cache[meta.id] = { status: 'denied', folder: meta._folder };
+            }
+            throw new Error(`[vm] Bundle "${bundleMeta.id}" denied by user`);
+        }
+
+        // Load each member in declaration order (respecting already-loaded deps)
+        for (const meta of memberMetas) {
+            if (this._loaded.includes(meta.id)) continue;
+            try {
+                await this.loadPlugin(meta._dir);
+                cache[meta.id] = { status: 'loaded', folder: meta._folder };
+            } catch (e) {
+                console.error(`[vm] bundle member "${meta.id}" failed: ${e.message}`);
+                cache[meta.id] = { status: 'error', folder: meta._folder, error: e.message };
+            }
+        }
     }
 
     // -- Sandbox context builder -----------------------------------------------
@@ -1731,6 +1904,10 @@ class PluginVM {
                 fs.mkdirSync(path.dirname(filePath), { recursive: true });
                 fs.writeFileSync(filePath, data, 'utf8');
             },
+            existsSync(filePath) {
+                assertPath('fs.read', filePath);
+                return fs.existsSync(filePath);
+            },
             readDir(dirPath) {
                 assertPath('fs.read', dirPath);
                 return fs.readdirSync(dirPath);
@@ -1747,6 +1924,38 @@ class PluginVM {
                 const server = http.createServer(handler);
                 server.listen(port);
                 return server;
+            },
+
+            fetch(url, options) {
+                if (!has('net.connect')) throw new Error('Permission denied: net.connect not granted');
+                const allowed = [...grantedPerms]
+                    .filter(p => p.startsWith('net.connect:'))
+                    .map(p => p.split(':')[1]);
+                if (allowed.length > 0) {
+                    try {
+                        const host = new URL(url).hostname;
+                        if (!allowed.includes(host)) {
+                            throw new Error(`Permission denied: net.connect to "${host}" not granted`);
+                        }
+                    } catch (e) {
+                        if (e.message.startsWith('Permission denied')) throw e;
+                    }
+                }
+                return global.fetch ? global.fetch(url, options)
+                    : Promise.reject(new Error('fetch not available in this Node version'));
+            },
+
+            exec(cmd, args = []) {
+                if (!has('system.exec')) throw new Error('Permission denied: system.exec not granted');
+                const allowed = [...grantedPerms]
+                    .filter(p => p.startsWith('system.exec:'))
+                    .map(p => p.split(':')[1]);
+                const cmdBase = cmd.trim().split(/\s+/)[0].toLowerCase();
+                if (allowed.length > 0 && !allowed.includes(cmdBase)) {
+                    throw new Error(`Permission denied: system.exec for "${cmdBase}" not granted`);
+                }
+                const { execFileSync } = require('child_process');
+                return execFileSync(cmd, args, { encoding: 'utf8' });
             },
 
             execAsync(cmd) {
@@ -1771,7 +1980,7 @@ class PluginVM {
             },
             use(name) {
                 if (!self._services.has(name)) {
-                    throw new Error(`Service "${name}" not found — is the plugin that provides it loaded?`);
+                    throw new Error(`Service "${name}" not found - is the plugin that provides it loaded?`);
                 }
                 return self._services.get(name);
             },
@@ -1810,7 +2019,7 @@ class PluginVM {
             require(id) {
                 if (ALLOWED_BUILTINS.has(id)) return require(id);
                 throw new Error(
-                    `[vm] Plugin "${meta.id}" tried to require("${id}") — ` +
+                    `[vm] Plugin "${meta.id}" tried to require("${id}") - ` +
                     `use the ctx API instead or request the appropriate permission.`
                 );
             },
@@ -1846,15 +2055,15 @@ class PluginVM {
         console.log(`[vm] "${meta.id}" loaded`);
     }
 
-    // -- _syncPlugins: scan folder, update cache, load new plugins -------------
+    // -- _syncPlugins: scan folder, update cache, load new plugins/bundles -----
     //
     // Cache status meanings:
-    //   "loaded"  — successfully loaded (this session or a prior one)
-    //   "denied"  — user closed the dialog or clicked Deny
-    //   "error"   — plugin threw during load
-    //   "removed" — folder was deleted; cleared when folder comes back
+    //   "loaded"  - successfully loaded (this session or a prior one)
+    //   "denied"  - user closed the dialog or clicked Deny
+    //   "error"   - plugin/bundle threw during load
+    //   "removed" - folder was deleted; cleared when folder comes back
     //
-    // A "denied" or "error" plugin is NOT retried until it has been removed
+    // A "denied" or "error" item is NOT retried until it has been removed
     // (status → "removed") and then re-added, forcing a fresh attempt.
 
     async _syncPlugins() {
@@ -1882,49 +2091,79 @@ class PluginVM {
             )
         );
 
-        // ── Mark removed plugins ──────────────────────────────────────────────
+        // ── Mark removed items ────────────────────────────────────────────────
         for (const [id, entry] of Object.entries(cache)) {
             if (entry.status !== 'removed' && entry.folder && !presentFolders.has(entry.folder)) {
-                console.log(`[vm] plugin "${id}" folder removed — will re-try if added back`);
+                console.log(`[vm] "${id}" folder removed - will re-try if added back`);
                 cache[id] = { ...entry, status: 'removed' };
             }
         }
 
-        // ── Build manifests for present folders ───────────────────────────────
-        const manifests = {};
+        // ── Separate bundles from plugins ─────────────────────────────────────
+        const bundleManifests = {};   // bundleId -> meta
+        const pluginManifests = {};   // pluginId -> meta
+
         for (const folder of presentFolders) {
-            const dir      = path.join(this.pluginsDir, folder);
-            const metaFile = path.join(dir, 'plugin.json');
-            if (!fs.existsSync(metaFile)) continue;
-            try {
-                const meta   = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
-                meta._dir    = dir;
-                meta._folder = folder;
-                manifests[meta.id] = meta;
-            } catch (e) {
-                console.error(`[vm] skipping "${folder}": ${e.message}`);
+            const dir        = path.join(this.pluginsDir, folder);
+            const bundleFile = path.join(dir, 'bundle.json');
+            const pluginFile = path.join(dir, 'plugin.json');
+
+            if (fs.existsSync(bundleFile)) {
+                try {
+                    const meta   = JSON.parse(fs.readFileSync(bundleFile, 'utf8'));
+                    meta._dir    = dir;
+                    meta._folder = folder;
+                    bundleManifests[meta.id] = meta;
+                } catch (e) {
+                    console.error(`[vm] skipping bundle "${folder}": ${e.message}`);
+                }
+            } else if (fs.existsSync(pluginFile)) {
+                try {
+                    const meta   = JSON.parse(fs.readFileSync(pluginFile, 'utf8'));
+                    meta._dir    = dir;
+                    meta._folder = folder;
+                    pluginManifests[meta.id] = meta;
+                } catch (e) {
+                    console.error(`[vm] skipping plugin "${folder}": ${e.message}`);
+                }
             }
         }
 
-        // ── Decide whether to (re-)load each plugin ───────────────────────────
+        // ── Decide whether to (re-)load each item ─────────────────────────────
         const shouldLoad = (id) => {
-            if (this._loaded.includes(id)) return false;   // already up in this session
+            if (this._loaded.includes(id)) return false;   // already up this session
             const entry = cache[id];
             if (!entry) return true;                        // first time ever seen
-            // Re-try only after a remove+re-add cycle
-            if (entry.status === 'removed') return true;
-            if (entry.status === 'loaded')  return true;   // new session, was working before
-            return false;                                   // denied or error — wait for drag cycle
+            if (entry.status === 'removed') return true;   // came back after removal
+            if (entry.status === 'loaded')  return true;   // new session, was working
+            return false;                                   // denied/error - wait for drag cycle
         };
 
-        // ── Topological async load ────────────────────────────────────────────
+        // ── Load bundles first ────────────────────────────────────────────────
+        for (const bundleId of Object.keys(bundleManifests)) {
+            if (!shouldLoad(bundleId)) continue;
+            const bundleMeta = bundleManifests[bundleId];
+            try {
+                await this._loadBundle(bundleMeta, pluginManifests, cache);
+                this._loaded.push(bundleId);
+                cache[bundleId] = { status: 'loaded', folder: bundleMeta._folder, type: 'bundle' };
+            } catch (e) {
+                const denied = e.message.includes('denied by user');
+                const status = denied ? 'denied' : 'error';
+                console.log(`[vm] bundle "${bundleId}" ${denied ? 'denied by user' : 'failed: ' + e.message}`);
+                cache[bundleId] = { status, folder: bundleMeta._folder, type: 'bundle',
+                    ...(denied ? {} : { error: e.message }) };
+            }
+        }
+
+        // ── Topological async load of standalone plugins ──────────────────────
         const visited = new Set();
         const load = async (id) => {
             if (visited.has(id)) return;
             visited.add(id);
             if (!shouldLoad(id)) return;
 
-            const meta = manifests[id];
+            const meta = pluginManifests[id];
             if (!meta) {
                 console.warn(`[vm] dependency "${id}" not found in plugins folder`);
                 return;
@@ -1943,7 +2182,7 @@ class PluginVM {
             }
         };
 
-        for (const id of Object.keys(manifests)) await load(id);
+        for (const id of Object.keys(pluginManifests)) await load(id);
 
         this._saveCache(cache);
     }
@@ -2109,7 +2348,7 @@ $FILE_README_MD = @'
 
 ---
 
-This repository contains the files that are **written to the user's machine** at install time. Nothing here runs during installation — these files are the application that gets installed.
+This repository contains the files that are **written to the user's machine** at install time. Nothing here runs during installation - these files are the application that gets installed.
 
 ## How it works
 
@@ -2141,7 +2380,7 @@ Edit files here to change what ends up on the user's machine. Then run `build.ps
 .\build.ps1
 ```
 
-Do **not** edit `public/install.ps1` directly — it is a generated file and will be overwritten.
+Do **not** edit `public/install.ps1` directly - it is a generated file and will be overwritten.
 
 ## Layout
 
@@ -2916,6 +3155,16 @@ $FILE_PLUGINS_CORE_PLUGIN_JSON = @'
 }
 '@
 
+$FILE_PLUGINS_ESSENTIALS_BUNDLE_JSON = @'
+{
+  "id": "essentials",
+  "name": "COMPUTER Essentials",
+  "version": "1.0.0",
+  "description": "The core foundation every COMPUTER installation needs.",
+  "plugins": ["core", "ui", "settings"]
+}
+'@
+
 $FILE_PLUGINS_EXAMPLE_INDEX_JS = @'
 'use strict';
 const path = require('path');
@@ -3610,7 +3859,7 @@ $FILE_PLUGINS_EXAMPLE_PLUGIN_JSON = @'
   "id": "example",
   "name": "Example",
   "version": "1.0.0",
-  "description": "Minimal example plugin — reads a file and logs it via the core logger",
+  "description": "Minimal example plugin - reads a file and logs it via the core logger",
   "main": "index.js",
   "dependencies": {
     "core": "*"
@@ -6147,6 +6396,7 @@ $FILE_PLUGINS_UI_PLUGIN_JSON = @'
 $FILE_MANIFEST['plugins/core/index.js'] = $FILE_PLUGINS_CORE_INDEX_JS
 $FILE_MANIFEST['plugins/core/LICENSE.txt'] = $FILE_PLUGINS_CORE_LICENSE_TXT
 $FILE_MANIFEST['plugins/core/plugin.json'] = $FILE_PLUGINS_CORE_PLUGIN_JSON
+$FILE_MANIFEST['plugins/essentials/bundle.json'] = $FILE_PLUGINS_ESSENTIALS_BUNDLE_JSON
 $FILE_MANIFEST['plugins/example/index.js'] = $FILE_PLUGINS_EXAMPLE_INDEX_JS
 $FILE_MANIFEST['plugins/example/LICENSE.txt'] = $FILE_PLUGINS_EXAMPLE_LICENSE_TXT
 $FILE_MANIFEST['plugins/example/plugin.json'] = $FILE_PLUGINS_EXAMPLE_PLUGIN_JSON

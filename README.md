@@ -7,7 +7,7 @@
 
 This repository is the **web root** served at [computer.burgil.dev](https://computer.burgil.dev). It contains both static assets and the generated installer script.
 
-## Generated files — do not edit directly
+## Generated files - do not edit directly
 
 | File | How it's produced |
 |---|---|
@@ -18,7 +18,7 @@ This repository is the **web root** served at [computer.burgil.dev](https://comp
 .\build.ps1
 ```
 
-## Static files — edit directly
+## Static files - edit directly
 
 | File / folder | Purpose |
 |---|---|
@@ -26,9 +26,9 @@ This repository is the **web root** served at [computer.burgil.dev](https://comp
 | `favicon.ico` | Site favicon |
 | `install.gif` | Demo GIF shown on the website |
 | `ads/` | Ad images (e.g. sponsor banners) |
-| `packages/index.json` | Package registry — curated bundles of plugins shown in the marketplace UI |
-| `plugins/index.json` | Plugin metadata registry — individual plugin listings |
-| `updates/latest.json` | **Current version** — read by `build.ps1` to stamp `{{VERSION}}` into the installer |
+| `packages/index.json` | Package registry - curated bundles of plugins shown in the marketplace UI |
+| `plugins/index.json` | Plugin metadata registry - individual plugin listings |
+| `updates/latest.json` | **Current version** - read by `build.ps1` to stamp `{{VERSION}}` into the installer |
 | `updates/patches/` | Incremental patch payloads for in-app updates |
 
 ## Versioning
@@ -42,7 +42,7 @@ This repository is the **web root** served at [computer.burgil.dev](https://comp
 ## Layout
 
 ```
-install.ps1             ← GENERATED — do not edit
+install.ps1             ← GENERATED - do not edit
 install.sh              Download + run stub for Unix
 favicon.ico
 install.gif
