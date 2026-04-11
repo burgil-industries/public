@@ -80,7 +80,7 @@
 #   The generated install.ps1 is reproducible from source via .\build.ps1.
 # ─────────────────────────────────────────────────────────────────────────────
 
-$APP_NAME      = "C.O.M.P.U.T.E.R."
+$APP_NAME      = "COMPUTER"
 $APP_NAME_LOW  = $APP_NAME.ToLower()
 $APP_PROTO     = $APP_NAME_LOW -replace '\.', ''
 $APP_VERSION   = "1.0.0"
@@ -558,7 +558,7 @@ try {
         $btnInstall.Add_Click({
             $frm.Close()
             if (Test-Path $ps1Path) {
-                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$ps1Path`""
+                Start-Process powershell.exe -ArgumentList "-NoProfile -File `"$ps1Path`""
             }
         })
         $btnWeb.Add_Click({
@@ -589,14 +589,14 @@ $FILE_DATA_LIB_CHECK_UPDATE_VBS = @'
 Dim sh, scriptDir
 scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
 Set sh = CreateObject("WScript.Shell")
-sh.Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & scriptDir & "check-update.ps1""", 0, False
+sh.Run "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -File """ & scriptDir & "check-update.ps1""", 0, False
 '@
 
 $FILE_DATA_LIB_REPAIR_VBS = @'
 Set sh = CreateObject("WScript.Shell")
 scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
 ps1 = scriptDir & "install.ps1"
-cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & ps1 & """"
+cmd = "powershell.exe -NoProfile -File """ & ps1 & """"
 sh.Run cmd, 1, False
 '@
 
@@ -773,7 +773,7 @@ $FILE_DATA_LIB_ROUTER_VBS = @'
 Dim scriptDir
 scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
 Set sh = CreateObject("WScript.Shell")
-sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & scriptDir & "router.ps1"" """ & WScript.Arguments(0) & """", 0, False
+sh.Run "powershell.exe -NoProfile -File """ & scriptDir & "router.ps1"" """ & WScript.Arguments(0) & """", 0, False
 '@
 
 $FILE_DATA_LIB_SENDTO_VBS = @'
@@ -844,7 +844,7 @@ if (-not $PresetInstallDir) {
     $tempScript = "$env:TEMP\$($AppNameLow)_uninstall_run.ps1"
     Copy-Item $src $tempScript -Force
     $vbs = "$env:TEMP\$($AppNameLow)_uninstall_run.vbs"
-    $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$tempScript`" `"$InstallDir`""
+    $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -File `"$tempScript`" `"$InstallDir`""
     $cmdVbs = $cmd.Replace('"', '""')
     $vbsContent = @"
 Set sh = CreateObject("WScript.Shell")
@@ -1044,7 +1044,7 @@ temp = sh.ExpandEnvironmentStrings("%TEMP%")
 sh.CurrentDirectory = temp
 scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
 ps1 = scriptDir & "uninstall.ps1"
-cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & ps1 & """"
+cmd = "powershell.exe -NoProfile -WindowStyle Hidden -File """ & ps1 & """"
 sh.Run cmd, 0, False
 '@
 
