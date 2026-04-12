@@ -898,7 +898,12 @@ $frm.FormBorderStyle = "FixedDialog"
 $frm.MaximizeBox     = $false
 $frm.MinimizeBox     = $false
 $frm.BackColor       = $C_BG
-$frm.Icon            = [System.Drawing.SystemIcons]::Shield
+$_icoPath = "$InstallDir\data\assets\$AppNameLow.ico"
+if (Test-Path $_icoPath) {
+    try { $frm.Icon = New-Object System.Drawing.Icon($_icoPath) } catch { $frm.Icon = [System.Drawing.SystemIcons]::Shield }
+} else {
+    $frm.Icon = [System.Drawing.SystemIcons]::Shield
+}
 
 $frm.Add_Load({ [UninstDark]::Enable($frm.Handle) })
 
@@ -1855,11 +1860,11 @@ class PluginVM {
      * anything).  The SSE stream stays alive for the entire lifetime of the page.
      *
      * @param {object} dialogData  Fully-formed data object injected into dialog.html
-     * @param {number} [winW=420]
+     * @param {number} [winW=450]
      * @param {number} [winH=380]
      * @returns {Promise<boolean>} true = granted, false = denied/closed
      */
-    _showPermDialog(dialogData, winW = 420, winH = 380) {
+    _showPermDialog(dialogData, winW = 450, winH = 380) {
         const iconPath = path.join(this.dataDir, 'assets', `${this.appName.toLowerCase()}.ico`);
 
         return new Promise((resolve) => {
@@ -2004,7 +2009,7 @@ class PluginVM {
             winH,
         };
 
-        const granted = await this._showPermDialog(dialogData, 420, winH);
+        const granted = await this._showPermDialog(dialogData, 450, winH);
         if (!granted) {
             throw new Error(`[vm] Permission denied by user for plugin "${pluginId}"`);
         }
@@ -2060,11 +2065,11 @@ class PluginVM {
             description     : bundleMeta.description || '',
             plugins         : groups,
             permDescriptions: PERM_DESCRIPTIONS,
-            winW            : 440,
+            winW            : 450,
             winH,
         };
 
-        const granted = await this._showPermDialog(dialogData, 440, winH);
+        const granted = await this._showPermDialog(dialogData, 450, winH);
         if (!granted) return false;
 
         for (const meta of memberMetas) {
@@ -10055,6 +10060,7 @@ function New-Page {
     $body.Controls.Add($p)
     return $p
 }
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # =============================================================================
 # PAGE 0 - WELCOME
 # =============================================================================
@@ -10086,6 +10092,7 @@ function New-WelcomeLink($text, $url, $x, $y, $w) {
 
 $pgWelcome.Controls.Add((New-WelcomeLink "Wizard Burgil 42" "https://github.com/burgil"            104 218 200))
 $pgWelcome.Controls.Add((New-WelcomeLink "Burgil Industries"   "https://github.com/burgil-industries"  370 218 160))
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # =============================================================================
 # PAGE 1 - LICENSE
 # =============================================================================
@@ -10217,6 +10224,7 @@ $chkLicense.Add_CheckedChanged({
     if ($chkLicense.Checked) { Write-Log "License accepted" }
 })
 $pgLicense.Controls.Add($chkLicense)
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # =============================================================================
 # PAGE 2 - LEGAL NOTICES
 # =============================================================================
@@ -10377,6 +10385,7 @@ $chkLegal.Add_CheckedChanged({
     if ($chkLegal.Checked) { Write-Log "Legal terms accepted" }
 })
 $pgLegal.Controls.Add($chkLegal)
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # =============================================================================
 # PAGE 2 - DEPENDENCIES
 # =============================================================================
@@ -10472,6 +10481,7 @@ function Update-DepStatus {
 
 $btnRecheck.Add_Click({ Write-Log "Dep recheck requested"; Start-DepCheck })
 $pgDeps.Controls.AddRange(@($lblPy, $lblPyStatus, $btnGetPy, $lblNode, $lblNodeStatus, $btnGetNode, $btnRecheck))
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # =============================================================================
 # PAGE 3 - INSTALL LOCATION
 # =============================================================================
@@ -10508,6 +10518,7 @@ $chkShortcut.ForeColor = $C_TEXT
 $chkShortcut.BackColor = $C_BG
 
 $pgLocation.Controls.AddRange(@($txtDir, $btnBrowse, $chkShortcut))
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # =============================================================================
 # PAGE 4 - CONFIRM
 # =============================================================================
@@ -10625,6 +10636,7 @@ $pgConfirm.Controls.AddRange(@(
     $btnAdvToggle, $pnlAdvanced,
     $pnlComputerRunning
 ))
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # =============================================================================
 # PAGE 5 - INSTALLING
 # =============================================================================
@@ -10639,6 +10651,7 @@ $progressBar.Maximum  = 100
 
 $lblStep = New-Label "Preparing..." 30 90 480 20 10 Regular $C_DIM
 $pgInstall.Controls.AddRange(@($progressBar, $lblStep))
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # =============================================================================
 # PAGE 6 - DONE  (setup complete + credits + ad, combined)
 # =============================================================================
@@ -10746,6 +10759,7 @@ $chkLaunch.ForeColor = $C_TEXT
 $chkLaunch.BackColor = $C_BG
 
 $pgDone.Controls.AddRange(@($lblDoneTitle, $lblDonePath, $btnOpenDir, $doneSep, $adBox, $chkLaunch))
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # =============================================================================
 # REINSTALL DETECTION PAGE (shown instead of wizard when already installed)
 # =============================================================================
@@ -10977,8 +10991,9 @@ public class ShellNotify {
         $lblReinstTitle.ForeColor = $C_SUCCESS
         $lblReinstPath.Text       = "All files and registry entries have been removed."
     }
-    $btnReinstClose.Text    = "Close"
-    $btnReinstClose.Visible = $true
+    $btnReinstClose.Text     = "Close"
+    $btnReinstClose.Location = New-Object System.Drawing.Point(420, 158)
+    $btnReinstClose.Visible  = $true
     $script:skipCloseConfirm = $true
 })
 
@@ -11017,6 +11032,7 @@ $pgReinstall.Controls.AddRange(@(
     $btnReinstOpen, $btnRepair, $btnUninstReinst, $btnReinstClose,
     $pbUninst, $pnlReinstComputerRunning
 ))
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # =============================================================================
 # UPDATE PAGE (shown when a newer version is found)
 # =============================================================================
