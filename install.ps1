@@ -1530,14 +1530,14 @@ const DEFAULT_ICON =
 
 // Extra technical detail shown in the hover tooltip per permission type
 const PERM_DETAILS = {
-  'fs.read'      : 'ctx.readFile(path) · ctx.readDir(path) · ctx.existsSync(path)',
+  'fs.read'      : 'ctx.readFile(path) - ctx.readDir(path) - ctx.existsSync(path)',
   'fs.write'     : 'ctx.writeFile(path, data)',
-  'net.listen'   : 'ctx.listen(port, handler) → http.Server',
-  'net.connect'  : 'ctx.fetch(url, options) → Promise<Response>',
-  'system.exec'  : 'ctx.exec(cmd, args) · ctx.execAsync(cmd) · ctx.spawnDetached(cmd, args)',
+  'net.listen'   : 'ctx.listen(port, handler) -> http.Server',
+  'net.connect'  : 'ctx.fetch(url, options) -> Promise<Response>',
+  'system.exec'  : 'ctx.exec(cmd, args) - ctx.execAsync(cmd) - ctx.spawnDetached(cmd, args)',
   'ctx.provide'  : 'ctx.provide(name, value)  -  exposes a service other plugins can ctx.use()',
   'ctx.broadcast': 'ctx.broadcast(msg)  -  fires vm:broadcast on the shared event bus',
-  'vm.manage'    : 'ctx.use("vm")  -  getAll · disable · enable · resetPerms · getDependents',
+  'vm.manage'    : 'ctx.use("vm")  -  getAll - disable - enable - resetPerms - getDependents',
 };
 
 const AVATAR_COLORS = [
@@ -1891,7 +1891,7 @@ class PluginVM {
                 }
 
                 // -- SSE endpoint - stays open while the dialog window is open --
-                // When the window closes, this connection drops → settle(false).
+                // When the window closes, this connection drops -> settle(false).
                 if (req.method === 'GET' && req.url === '/sse') {
                     res.writeHead(200, {
                         'Content-Type' : 'text/event-stream',
@@ -1972,7 +1972,7 @@ class PluginVM {
             if (blocked && !flags[blocked]) {
                 throw new Error(
                     `[vm] Plugin "${pluginId}" requests "${perm}" (unrestricted). ` +
-                    `Enable "${blocked}" in Settings → Feature Flags to allow it.`
+                    `Enable "${blocked}" in Settings -> Feature Flags to allow it.`
                 );
             }
         }
@@ -2785,7 +2785,7 @@ $FILE_README_MD = @'
 # app
 
 > **Part of [burgil-industries/computer](https://github.com/burgil-industries/computer)**
-> [`computer`](https://github.com/burgil-industries/computer) → **`app`** | [`installer`](https://github.com/burgil-industries/installer) | [`public`](https://github.com/burgil-industries/public) | [`plugins`](https://github.com/burgil-industries/plugins)
+> [`computer`](https://github.com/burgil-industries/computer) -> **`app`** | [`installer`](https://github.com/burgil-industries/installer) | [`public`](https://github.com/burgil-industries/public) | [`plugins`](https://github.com/burgil-industries/plugins)
 
 ---
 
@@ -2801,7 +2801,7 @@ This repository contains the files that are **written to the user's machine** at
 
 This directive reads every file under `app/` and encodes each one as a PowerShell here-string variable inside `public/install.ps1`. At install time, the installer script extracts those variables back to disk.
 
-### File → variable → disk path
+### File -> variable -> disk path
 
 | Source file | Variable in install.ps1 | Written to |
 |---|---|---|
@@ -5984,7 +5984,7 @@ body { display: flex; flex-direction: column; }
       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
     </svg>
-    <input id="search" type="text" placeholder="Search plugins…" oninput="render()">
+    <input id="search" type="text" placeholder="Search plugins..." oninput="render()">
   </div>
 
   <div class="filters">
@@ -6005,7 +6005,7 @@ body { display: flex; flex-direction: column; }
 </div>
 
 <div class="content">
-  <div class="plugin-grid" id="grid"><div class="empty">Loading…</div></div>
+  <div class="plugin-grid" id="grid"><div class="empty">Loading...</div></div>
 </div>
 
 <!-- Dependency confirmation modal -->
@@ -6069,7 +6069,7 @@ function render() {
   // Update subtitle
   const loaded = plugins.filter(p => p.loaded).length;
   document.getElementById('topbar-sub').textContent =
-    `${plugins.length} plugins · ${loaded} loaded`;
+    `${plugins.length} plugins - ${loaded} loaded`;
 
   const grid = document.getElementById('grid');
   if (list.length === 0) {
@@ -7853,7 +7853,7 @@ $FILE_PLUGINS_SETTINGS_PANEL_HTML = @'
   <span id="app-version"></span>
   <div class="status">
     <div class="dot" id="dot"></div>
-    <span id="conn-label">Connecting…</span>
+    <span id="conn-label">Connecting...</span>
   </div>
 </header>
 

@@ -1,7 +1,7 @@
 # public
 
 > **Part of [burgil-industries/computer](https://github.com/burgil-industries/computer)**
-> [`computer`](https://github.com/burgil-industries/computer) → [`app`](https://github.com/burgil-industries/app) | [`installer`](https://github.com/burgil-industries/installer) | **`public`** | [`plugins`](https://github.com/burgil-industries/plugins)
+> [`computer`](https://github.com/burgil-industries/computer) -> [`app`](https://github.com/burgil-industries/app) | [`installer`](https://github.com/burgil-industries/installer) | **`public`** | [`plugins`](https://github.com/burgil-industries/plugins)
 
 ---
 
