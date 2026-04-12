@@ -1124,7 +1124,7 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
 
   body { display: flex; flex-direction: column; overflow: hidden; }
 
-  /* ── Header ─────────────────────────────────────────────────────────── */
+  /* -- Header ----------------------------------------------------------- */
   .header {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
@@ -1195,7 +1195,7 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
     text-overflow: ellipsis;
   }
 
-  /* ── Bundle plugin pills ─────────────────────────────────────────────── */
+  /* -- Bundle plugin pills ----------------------------------------------- */
   .plugin-pills {
     display: flex;
     flex-wrap: wrap;
@@ -1213,7 +1213,7 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
     background: var(--surface-3);
   }
 
-  /* ── Permission list ─────────────────────────────────────────────────── */
+  /* -- Permission list --------------------------------------------------- */
   .body {
     flex: 1;
     overflow-y: auto;
@@ -1299,7 +1299,7 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
     max-width: 100%;
   }
 
-  /* ── Footer ──────────────────────────────────────────────────────────── */
+  /* -- Footer ------------------------------------------------------------ */
   .footer {
     border-top: 1px solid var(--border);
     padding: 10px 18px 12px;
@@ -1338,7 +1338,7 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
   }
   .btn-allow:hover:not(:disabled) { opacity: .88; }
 
-  /* ── Done state ──────────────────────────────────────────────────────── */
+  /* -- Done state -------------------------------------------------------- */
   .done-overlay {
     display: none;
     position: fixed;
@@ -1669,12 +1669,12 @@ class PluginVM {
             };
 
             const timeout = setTimeout(() => {
-                console.warn(`[vm] permission dialog timed out for "${dialogData.name}" — denying`);
+                console.warn(`[vm] permission dialog timed out for "${dialogData.name}" - denying`);
                 settle(false);
             }, 2 * 60 * 1000);
 
             const server = http.createServer((req, res) => {
-                // ── Favicon ────────────────────────────────────────────────────
+                // -- Favicon ----------------------------------------------------
                 if (req.url === '/favicon.ico') {
                     try {
                         res.writeHead(200, { 'Content-Type': 'image/x-icon', 'Cache-Control': 'no-cache' });
@@ -1683,7 +1683,7 @@ class PluginVM {
                     return;
                 }
 
-                // ── SSE endpoint — stays open while the dialog window is open ──
+                // -- SSE endpoint - stays open while the dialog window is open --
                 // When the window closes, this connection drops → settle(false).
                 if (req.method === 'GET' && req.url === '/sse') {
                     res.writeHead(200, {
@@ -1706,14 +1706,14 @@ class PluginVM {
                     return;
                 }
 
-                // ── Serve the dialog HTML ──────────────────────────────────────
+                // -- Serve the dialog HTML --------------------------------------
                 if (req.method === 'GET' && req.url === '/') {
                     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
                     res.end(html);
                     return;
                 }
 
-                // ── Receive the Allow / Deny click ─────────────────────────────
+                // -- Receive the Allow / Deny click -----------------------------
                 if (req.method === 'POST' && req.url === '/result') {
                     let body = '';
                     req.on('data', chunk => { body += chunk; });
@@ -2068,7 +2068,7 @@ class PluginVM {
                 }
                 return global.fetch
                     ? global.fetch(url, options)
-                    : Promise.reject(new Error('fetch not available — upgrade Node.js to v18+'));
+                    : Promise.reject(new Error('fetch not available - upgrade Node.js to v18+'));
             },
 
             exec(cmd, args = []) {
@@ -2130,10 +2130,10 @@ class PluginVM {
             use(name) {
                 // The built-in 'vm' management service requires vm.manage permission
                 if (name === 'vm' && !has('vm.manage')) {
-                    throw new Error('Permission denied: vm.manage not granted — declare it in plugin.json to access VM control');
+                    throw new Error('Permission denied: vm.manage not granted - declare it in plugin.json to access VM control');
                 }
                 if (!self._services.has(name)) {
-                    throw new Error(`Service "${name}" not found — is the plugin that provides it loaded?`);
+                    throw new Error(`Service "${name}" not found - is the plugin that provides it loaded?`);
                 }
                 return self._services.get(name);
             },
@@ -2172,7 +2172,7 @@ class PluginVM {
             require(id) {
                 if (ALLOWED_BUILTINS.has(id)) return require(id);
                 throw new Error(
-                    `[vm] Plugin "${meta.id}" tried to require("${id}") — ` +
+                    `[vm] Plugin "${meta.id}" tried to require("${id}") - ` +
                     `use the ctx API instead or request the appropriate permission.`
                 );
             },
@@ -2227,7 +2227,7 @@ class PluginVM {
             return;
         }
 
-        // ── Snapshot current folders ──────────────────────────────────────────
+        // -- Snapshot current folders ------------------------------------------
         const presentFolders = new Set(
             fs.readdirSync(this.pluginsDir).filter(e => {
                 try { return fs.statSync(path.join(this.pluginsDir, e)).isDirectory(); }
@@ -2235,15 +2235,15 @@ class PluginVM {
             })
         );
 
-        // ── Mark removed items ────────────────────────────────────────────────
+        // -- Mark removed items ------------------------------------------------
         for (const [id, entry] of Object.entries(cache)) {
             if (entry.status !== 'removed' && entry.folder && !presentFolders.has(entry.folder)) {
-                console.log(`[vm] "${id}" folder removed — will re-try if added back`);
+                console.log(`[vm] "${id}" folder removed - will re-try if added back`);
                 cache[id] = { ...entry, status: 'removed' };
             }
         }
 
-        // ── Separate bundles from plugins ─────────────────────────────────────
+        // -- Separate bundles from plugins -------------------------------------
         const bundleManifests = {};
         const pluginManifests = {};
 
@@ -2277,10 +2277,10 @@ class PluginVM {
             if (entry.status === 'removed')  return true;
             if (entry.status === 'loaded')   return true;   // new session
             if (entry.status === 'disabled') return false;  // explicitly disabled
-            return false;                                   // denied / error — wait for drag cycle
+            return false;                                   // denied / error - wait for drag cycle
         };
 
-        // ── Load bundles first ────────────────────────────────────────────────
+        // -- Load bundles first ------------------------------------------------
         for (const bundleId of Object.keys(bundleManifests)) {
             if (!shouldLoad(bundleId)) continue;
             const bundleMeta = bundleManifests[bundleId];
@@ -2299,7 +2299,7 @@ class PluginVM {
             }
         }
 
-        // ── Topological async load of standalone plugins ──────────────────────
+        // -- Topological async load of standalone plugins ----------------------
         const visited = new Set();
         const load = async (id) => {
             if (visited.has(id)) return;
@@ -4041,7 +4041,7 @@ module.exports = {
         const log    = ctx.use('log');
         const vmCtrl = ctx.use('vm');
 
-        // ── REST API + panel server ────────────────────────────────────────────
+        // -- REST API + panel server --------------------------------------------
         const server = ctx.listen(PORT, (req, res) => {
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -4051,7 +4051,7 @@ module.exports = {
 
             const url = req.url || '/';
 
-            // ── Panel HTML (served directly from this plugin's directory) ──────
+            // -- Panel HTML (served directly from this plugin's directory) ------
             if (req.method === 'GET' && (url === '/' || url === '/index.html')) {
                 const html = require('fs').readFileSync(path.join(__dirname, 'panel.html'));
                 res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -4059,14 +4059,14 @@ module.exports = {
                 return;
             }
 
-            // ── GET /api/plugins ───────────────────────────────────────────────
+            // -- GET /api/plugins -----------------------------------------------
             if (req.method === 'GET' && url === '/api/plugins') {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify(vmCtrl.getAll()));
                 return;
             }
 
-            // ── POST /api/plugins/:id/disable ──────────────────────────────────
+            // -- POST /api/plugins/:id/disable ----------------------------------
             if (req.method === 'POST' && /^\/api\/plugins\/[^/]+\/disable$/.test(url)) {
                 const id = url.split('/')[3];
                 const dependents = vmCtrl.getDependents(id);
@@ -4083,7 +4083,7 @@ module.exports = {
                 return;
             }
 
-            // ── POST /api/plugins/:id/disable-force ────────────────────────────
+            // -- POST /api/plugins/:id/disable-force ----------------------------
             // Disables the plugin AND all dependents in one shot.
             if (req.method === 'POST' && /^\/api\/plugins\/[^/]+\/disable-force$/.test(url)) {
                 const id = url.split('/')[3];
@@ -4096,7 +4096,7 @@ module.exports = {
                 return;
             }
 
-            // ── POST /api/plugins/:id/enable ───────────────────────────────────
+            // -- POST /api/plugins/:id/enable -----------------------------------
             if (req.method === 'POST' && /^\/api\/plugins\/[^/]+\/enable$/.test(url)) {
                 const id = url.split('/')[3];
                 vmCtrl.enable(id).then(result => {
@@ -4110,7 +4110,7 @@ module.exports = {
                 return;
             }
 
-            // ── POST /api/plugins/:id/reset-perms ─────────────────────────────
+            // -- POST /api/plugins/:id/reset-perms -----------------------------
             if (req.method === 'POST' && /^\/api\/plugins\/[^/]+\/reset-perms$/.test(url)) {
                 const id = url.split('/')[3];
                 vmCtrl.resetPerms(id).then(result => {
@@ -4127,7 +4127,7 @@ module.exports = {
             res.writeHead(404); res.end('Not found');
         });
 
-        server.on('error', err => log(`manager: server error — ${err.message}`, 'ERROR'));
+        server.on('error', err => log(`manager: server error - ${err.message}`, 'ERROR'));
 
         // Register as a redirect panel in the UI plugin
         const registerPanel = ctx.use('ui.registerPanel');
@@ -4170,7 +4170,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
   font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px;
   -webkit-font-smoothing: antialiased; }
 
-/* ── Layout ── */
+/* -- Layout -- */
 body { display: flex; flex-direction: column; }
 
 .topbar {
@@ -4212,7 +4212,7 @@ body { display: flex; flex-direction: column; }
 .content::-webkit-scrollbar { width: 5px; }
 .content::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 3px; }
 
-/* ── Plugin cards ── */
+/* -- Plugin cards -- */
 .plugin-grid { display: flex; flex-direction: column; gap: 8px; }
 
 .plugin-card {
@@ -4268,7 +4268,7 @@ body { display: flex; flex-direction: column; }
 .card-actions { display: flex; flex-direction: column; align-items: flex-end;
   gap: 8px; justify-content: flex-start; }
 
-/* ── Toggle switch ── */
+/* -- Toggle switch -- */
 .toggle-wrap { display: flex; align-items: center; gap: 6px; }
 .toggle-label { font-size: 10px; color: var(--muted); }
 
@@ -4299,10 +4299,10 @@ body { display: flex; flex-direction: column; }
   background: #2d1a0d; border-radius: 4px; padding: 3px 6px; max-width: 180px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ── Empty / loading ── */
+/* -- Empty / loading -- */
 .empty { text-align: center; color: var(--muted); padding: 60px 0; font-size: 13px; }
 
-/* ── Confirm modal ── */
+/* -- Confirm modal -- */
 .modal-backdrop {
   display: none; position: fixed; inset: 0;
   background: rgba(0,0,0,.65); z-index: 100;
@@ -4329,7 +4329,7 @@ body { display: flex; flex-direction: column; }
 .btn-confirm { background: var(--red); color: #fff; }
 .btn-confirm:hover { opacity: .88; }
 
-/* ── Toast ── */
+/* -- Toast -- */
 .toast {
   position: fixed; bottom: 20px; right: 20px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
@@ -4526,7 +4526,7 @@ function scrollTo(id) {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-// ── Toggle (enable / disable) ───────────────────────────────────────────────
+// -- Toggle (enable / disable) -----------------------------------------------
 async function togglePlugin(id, enable, checkbox) {
   checkbox.disabled = true;
   try {
@@ -4566,7 +4566,7 @@ async function disablePlugin(id, checkbox) {
     );
   } else {
     const data = await res.json();
-    toast(`Disabled "${id}"${data.restart_required ? ' — restart to take full effect' : ''}`);
+    toast(`Disabled "${id}"${data.restart_required ? ' - restart to take full effect' : ''}`);
     await load();
   }
 }
@@ -4582,7 +4582,7 @@ async function resetPerms(id) {
   }
 }
 
-// ── Modal ────────────────────────────────────────────────────────────────────
+// -- Modal --------------------------------------------------------------------
 let _modalOnConfirm = null;
 let _modalOnCancel  = null;
 
@@ -4610,7 +4610,7 @@ document.getElementById('modal-backdrop').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeModal();
 });
 
-// ── Toast ────────────────────────────────────────────────────────────────────
+// -- Toast --------------------------------------------------------------------
 let _toastTimer = null;
 function toast(msg, isError = false) {
   let el = document.querySelector('.toast');
@@ -4635,7 +4635,7 @@ $FILE_PLUGINS_MANAGER_PLUGIN_JSON = @'
   "id": "manager",
   "name": "Plugin Manager",
   "version": "1.0.0",
-  "description": "Web-based plugin manager — enable, disable, inspect and manage all plugins.",
+  "description": "Web-based plugin manager - enable, disable, inspect and manage all plugins.",
   "main": "index.js",
   "dependencies": {
     "core": "*",
@@ -6366,12 +6366,12 @@ const path = require('path');
 module.exports = {
     install(ctx) {
         const log  = ctx.use('log');
-        const port = ctx.use('ui.port');   // guaranteed available — ui is a dependency
+        const port = ctx.use('ui.port');   // guaranteed available - ui is a dependency
 
         // Path to the bundled PowerShell tray script
         const ps1 = path.join(ctx.pluginDir, 'tray.ps1');
 
-        // App icon — falls back gracefully in the PS script if not present
+        // App icon - falls back gracefully in the PS script if not present
         const iconPath = path.join(ctx.dataDir, '..', '..', 'assets',
             ctx.appName.toLowerCase() + '.ico');
 
@@ -6388,7 +6388,7 @@ module.exports = {
             ]);
             log(`tray: icon started (UI -> http://127.0.0.1:${port})`);
         } catch (e) {
-            log(`tray: failed to start icon — ${e.message}`, 'WARN');
+            log(`tray: failed to start icon - ${e.message}`, 'WARN');
         }
 
         log('tray plugin loaded');
@@ -6442,7 +6442,7 @@ Add-Type -AssemblyName System.Drawing
 
 $url = "http://127.0.0.1:$Port"
 
-# ── Tray icon image ────────────────────────────────────────────────────────────
+# -- Tray icon image ------------------------------------------------------------
 if ($IconPath -and (Test-Path $IconPath)) {
     $icon = [System.Drawing.Icon]::new($IconPath)
 } else {
@@ -6450,13 +6450,13 @@ if ($IconPath -and (Test-Path $IconPath)) {
     $icon = [System.Drawing.SystemIcons]::Application
 }
 
-# ── NotifyIcon ─────────────────────────────────────────────────────────────────
+# -- NotifyIcon -----------------------------------------------------------------
 $tray          = New-Object System.Windows.Forms.NotifyIcon
 $tray.Icon     = $icon
 $tray.Text     = $AppName
 $tray.Visible  = $true
 
-# ── Context menu ──────────────────────────────────────────────────────────────
+# -- Context menu --------------------------------------------------------------
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 
 # Header item (non-clickable label)
@@ -6501,7 +6501,7 @@ $tray.Add_MouseClick({
     }
 })
 
-# ── Message loop (keeps icon alive until Exit is chosen) ─────────────────────
+# -- Message loop (keeps icon alive until Exit is chosen) ---------------------
 [System.Windows.Forms.Application]::Run()
 
 # Cleanup
