@@ -204,14 +204,23 @@ if ($ICON_URL) {
         (New-Object System.Net.WebClient).DownloadFile($ICON_URL, $script:iconTemp)
         $script:iconImage = [System.Drawing.Image]::FromFile($script:iconTemp)
     } catch {
-        Write-Log "Icon download failed: $_" "ERROR"
-        [System.Windows.Forms.MessageBox]::Show(
-            "Could not reach the $APP_NAME servers.`n`nPlease check your internet connection and try again later.",
+        Write-Log "Icon download failed (no internet?): $_" "WARN"
+        $choice = [System.Windows.Forms.MessageBox]::Show(
+            "Could not download the $APP_NAME icon (no internet connection?).`n`nA default system icon will be used instead.`n`nContinue with setup anyway?",
             "$APP_NAME Setup",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
-        $script:_mutex.Dispose()
-        exit
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Warning)
+        if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+            $script:_mutex.Dispose()
+            exit
+        }
+        # Fall back to a built-in Windows shell icon (always available, no internet needed)
+        try {
+            $shell32 = [System.Drawing.Icon]::ExtractAssociatedIcon("$env:SystemRoot\System32\shell32.dll")
+            $script:iconImage = $shell32.ToBitmap()
+        } catch {
+            Write-Log "Fallback icon also failed: $_" "WARN"
+        }
     }
 }
 # --- Custom controls: DarkButton + GlowProgressBar + DarkMode ----------------
