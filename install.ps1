@@ -1501,6 +1501,12 @@ if (data.type === 'bundle') {
   }
 }
 
+// Keep an SSE connection alive so the server knows when this window closes.
+// Edge closes the normal HTTP keep-alive connection right after page load,
+// so the old req.socket 'close' trick fires immediately (before you click).
+// An SSE stream stays open for the entire lifetime of the page.
+new EventSource('/sse');
+
 async function answer(granted) {
   document.getElementById('btn-deny').disabled  = true;
   document.getElementById('btn-allow').disabled = true;
@@ -1536,7 +1542,7 @@ const vm     = require('vm');
 const fs     = require('fs');
 const path   = require('path');
 const http   = require('http');
-const { exec, spawn } = require('child_process');
+const { exec, execFileSync, spawn } = require('child_process');
 
 // -- Permission metadata -------------------------------------------------------
 const PERM_DESCRIPTIONS = {
@@ -1547,6 +1553,7 @@ const PERM_DESCRIPTIONS = {
     'system.exec'    : 'Run system commands',
     'ctx.provide'    : 'Provide services to other plugins',
     'ctx.broadcast'  : 'Send messages to all connected clients',
+    'vm.manage'      : 'Manage plugins (enable, disable, reload)',
 };
 
 // -- Plugin VM -----------------------------------------------------------------
@@ -1560,24 +1567,20 @@ class PluginVM {
      * }} options
      */
     constructor(options) {
-        this.pluginsDir  = options.pluginsDir;
-        this.dataDir     = options.dataDir;
-        this.appName     = options.appName    || 'Computer';
-        this.appVersion  = options.appVersion || '1.0.0';
-        this._services   = new Map();   // name -> value (provided by plugins)
-        this._loaded     = [];          // plugin/bundle IDs loaded in this session
-        this._syncing    = false;       // mutex: prevents concurrent _syncPlugins calls
+        this.pluginsDir   = options.pluginsDir;
+        this.dataDir      = options.dataDir;
+        this.appName      = options.appName    || 'Computer';
+        this.appVersion   = options.appVersion || '1.0.0';
+        this._services    = new Map();   // name -> value (provided by plugins)
+        this._loaded      = [];          // plugin/bundle IDs loaded in this session
+        this._pluginMetas = new Map();   // pluginId -> plugin.json contents
+        this._syncing     = false;       // mutex: prevents concurrent _syncPlugins calls
     }
 
     // -- Plugin cache (data/plugins-cache.json) --------------------------------
-    // Tracks per-plugin/bundle status across restarts so denied/broken items
-    // aren't re-prompted on every launch - only after a drag-out + drag-back.
-    //
-    // Schema: { [id]: { status: "loaded"|"denied"|"error"|"removed", folder?: string, type?: "bundle" } }
+    // Schema: { [id]: { status: "loaded"|"denied"|"error"|"removed"|"disabled", folder?, type? } }
 
-    _cacheFile() {
-        return path.join(this.dataDir, 'plugins-cache.json');
-    }
+    _cacheFile() { return path.join(this.dataDir, 'plugins-cache.json'); }
 
     _loadCache() {
         try { return JSON.parse(fs.readFileSync(this._cacheFile(), 'utf8')); }
@@ -1636,16 +1639,20 @@ class PluginVM {
     }
 
     /**
-     * Show the permission dialog in Edge and resolve when the user responds
-     * or closes the window.
+     * Show the permission dialog and resolve when the user responds or closes.
      *
-     * @param {object} dialogData  - Fully-formed data object injected into dialog.html
+     * Window-close detection uses a persistent SSE connection (/sse) instead of
+     * the socket close event on the GET / request.  Edge closes the keep-alive
+     * HTTP connection right after loading the page, which caused the old
+     * req.socket 'close' handler to fire immediately (before the user clicked
+     * anything).  The SSE stream stays alive for the entire lifetime of the page.
+     *
+     * @param {object} dialogData  Fully-formed data object injected into dialog.html
      * @param {number} [winW=420]
      * @param {number} [winH=380]
      * @returns {Promise<boolean>} true = granted, false = denied/closed
      */
     _showPermDialog(dialogData, winW = 420, winH = 380) {
-        // App icon served as /favicon.ico
         const iconPath = path.join(this.dataDir, 'assets', `${this.appName.toLowerCase()}.ico`);
 
         return new Promise((resolve) => {
@@ -1661,9 +1668,8 @@ class PluginVM {
                 resolve(granted);
             };
 
-            // Auto-deny if the user never responds (e.g. killed the process)
             const timeout = setTimeout(() => {
-                console.warn(`[vm] permission dialog timed out for "${dialogData.name}" - denying`);
+                console.warn(`[vm] permission dialog timed out for "${dialogData.name}" — denying`);
                 settle(false);
             }, 2 * 60 * 1000);
 
@@ -1673,25 +1679,36 @@ class PluginVM {
                     try {
                         res.writeHead(200, { 'Content-Type': 'image/x-icon', 'Cache-Control': 'no-cache' });
                         res.end(fs.readFileSync(iconPath));
-                    } catch (_) {
-                        res.writeHead(204); res.end();
-                    }
+                    } catch (_) { res.writeHead(204); res.end(); }
+                    return;
+                }
+
+                // ── SSE endpoint — stays open while the dialog window is open ──
+                // When the window closes, this connection drops → settle(false).
+                if (req.method === 'GET' && req.url === '/sse') {
+                    res.writeHead(200, {
+                        'Content-Type' : 'text/event-stream',
+                        'Cache-Control': 'no-cache',
+                        'Connection'   : 'keep-alive',
+                    });
+                    res.write('data: connected\n\n');
+
+                    const hb = setInterval(() => {
+                        try { res.write(':ping\n\n'); }
+                        catch (_) { clearInterval(hb); }
+                    }, 25000);
+
+                    req.socket.once('close', () => {
+                        clearInterval(hb);
+                        // Small delay so any in-flight POST /result still wins
+                        setTimeout(() => settle(false), 500);
+                    });
                     return;
                 }
 
                 // ── Serve the dialog HTML ──────────────────────────────────────
                 if (req.method === 'GET' && req.url === '/') {
-                    // Detect window close: if the socket drops before a POST /result
-                    // arrives, treat it as Deny (with a small delay so a POST that
-                    // arrives on the same keep-alive connection still wins).
-                    req.socket.once('close', () => {
-                        setTimeout(() => settle(false), 300);
-                    });
-
-                    res.writeHead(200, {
-                        'Content-Type': 'text/html; charset=utf-8',
-                        'Connection'  : 'keep-alive',
-                    });
+                    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
                     res.end(html);
                     return;
                 }
@@ -1703,19 +1720,14 @@ class PluginVM {
                     req.on('end', () => {
                         try {
                             const { granted } = JSON.parse(body);
-                            res.writeHead(200);
-                            res.end();
+                            res.writeHead(200); res.end();
                             settle(!!granted);
-                        } catch (_) {
-                            res.writeHead(400);
-                            res.end();
-                        }
+                        } catch (_) { res.writeHead(400); res.end(); }
                     });
                     return;
                 }
 
-                res.writeHead(404);
-                res.end();
+                res.writeHead(404); res.end();
             });
 
             server.listen(0, '127.0.0.1', () => {
@@ -1736,9 +1748,8 @@ class PluginVM {
         if (!requested || requested.length === 0) return new Set();
 
         const saved = this._loadSavedPerms(pluginId);
-        if (saved !== null) return saved;   // already decided
+        if (saved !== null) return saved;
 
-        // Height: header(90) + section(28) + items(54 each) + footer(52) + chrome(36)
         const winH = Math.min(Math.max(206 + requested.length * 54, 290), 500);
 
         const dialogData = {
@@ -1764,7 +1775,6 @@ class PluginVM {
     // -- Bundle permission check (merged dialog for all members) ---------------
 
     async _checkBundlePermissions(bundleMeta, memberMetas) {
-        // Only show the dialog if at least one member is missing saved perms
         const anyMissing = memberMetas.some(meta => {
             const requested = (meta.permissions || []).map(p =>
                 p.replace('${dataDir}', this.dataDir)
@@ -1772,9 +1782,8 @@ class PluginVM {
             return requested.length > 0 && this._loadSavedPerms(meta.id) === null;
         });
 
-        if (!anyMissing) return true;   // all already decided - silent load
+        if (!anyMissing) return true;
 
-        // Build groups for the dialog
         const groups = memberMetas
             .map(meta => ({
                 id          : meta.id,
@@ -1802,7 +1811,6 @@ class PluginVM {
         const granted = await this._showPermDialog(dialogData, 440, winH);
         if (!granted) return false;
 
-        // Save permissions for every member
         for (const meta of memberMetas) {
             const requested = (meta.permissions || []).map(p =>
                 p.replace('${dataDir}', this.dataDir)
@@ -1836,14 +1844,12 @@ class PluginVM {
 
         const granted = await this._checkBundlePermissions(bundleMeta, memberMetas);
         if (!granted) {
-            // Mark each member denied in cache too
             for (const meta of memberMetas) {
                 cache[meta.id] = { status: 'denied', folder: meta._folder };
             }
             throw new Error(`[vm] Bundle "${bundleMeta.id}" denied by user`);
         }
 
-        // Load each member in declaration order (respecting already-loaded deps)
         for (const meta of memberMetas) {
             if (this._loaded.includes(meta.id)) continue;
             try {
@@ -1854,6 +1860,125 @@ class PluginVM {
                 cache[meta.id] = { status: 'error', folder: meta._folder, error: e.message };
             }
         }
+    }
+
+    // -- Management API (exposed as the 'vm' service) --------------------------
+
+    /**
+     * Returns the full plugin/bundle list from disk, annotated with live status.
+     */
+    getAllPlugins() {
+        const cache = this._loadCache();
+        const result = [];
+
+        if (!fs.existsSync(this.pluginsDir)) return result;
+
+        const folders = fs.readdirSync(this.pluginsDir).filter(e => {
+            try { return fs.statSync(path.join(this.pluginsDir, e)).isDirectory(); }
+            catch (_) { return false; }
+        });
+
+        for (const folder of folders) {
+            const dir        = path.join(this.pluginsDir, folder);
+            const bundleFile = path.join(dir, 'bundle.json');
+            const pluginFile = path.join(dir, 'plugin.json');
+
+            if (fs.existsSync(bundleFile)) {
+                try {
+                    const meta  = JSON.parse(fs.readFileSync(bundleFile, 'utf8'));
+                    const entry = cache[meta.id] || {};
+                    result.push({
+                        id: meta.id, name: meta.name || meta.id,
+                        version: meta.version || '', description: meta.description || '',
+                        type: 'bundle', members: meta.plugins || [],
+                        dependencies: [], permissions: [], dependents: [],
+                        status: entry.status || 'new',
+                        loaded: this._loaded.includes(meta.id),
+                    });
+                } catch (_) {}
+            } else if (fs.existsSync(pluginFile)) {
+                try {
+                    const meta  = JSON.parse(fs.readFileSync(pluginFile, 'utf8'));
+                    const entry = cache[meta.id] || {};
+                    result.push({
+                        id: meta.id, name: meta.name || meta.id,
+                        version: meta.version || '', description: meta.description || '',
+                        type: 'plugin',
+                        dependencies: Object.keys(meta.dependencies || {}),
+                        permissions: meta.permissions || [], dependents: [],
+                        status: entry.status || 'new',
+                        loaded: this._loaded.includes(meta.id),
+                    });
+                } catch (_) {}
+            }
+        }
+
+        // Fill in dependents: which other plugins list this one as a dependency
+        for (const p of result) {
+            p.dependents = result
+                .filter(q => q.dependencies.includes(p.id))
+                .map(q => q.id);
+        }
+
+        return result;
+    }
+
+    /**
+     * Returns a deep list of all plugin IDs that (transitively) depend on `id`.
+     */
+    getAllDependents(id) {
+        const plugins = this.getAllPlugins();
+        const direct = (x) => plugins.filter(p => p.dependencies.includes(x)).map(p => p.id);
+        const visited = new Set();
+        const walk = (x) => {
+            if (visited.has(x)) return;
+            visited.add(x);
+            for (const d of direct(x)) walk(d);
+        };
+        walk(id);
+        visited.delete(id);
+        return [...visited];
+    }
+
+    /**
+     * Mark a plugin as disabled. Effect is permanent but only fully takes effect
+     * on next restart (we can't unload running plugin code).
+     */
+    disablePlugin(id) {
+        const cache = this._loadCache();
+        cache[id] = { ...(cache[id] || {}), status: 'disabled' };
+        this._saveCache(cache);
+        return { ok: true, restart_required: this._loaded.includes(id) };
+    }
+
+    /**
+     * Re-enable a disabled/denied/errored plugin and immediately try to load it.
+     */
+    async enablePlugin(id) {
+        const cache = this._loadCache();
+        const existing = cache[id] || {};
+        cache[id] = { status: 'loaded', ...(existing.folder ? { folder: existing.folder } : {}) };
+        this._saveCache(cache);
+        if (!this._loaded.includes(id)) {
+            await this._syncPlugins();
+        }
+        return { ok: true, loaded: this._loaded.includes(id) };
+    }
+
+    /**
+     * Delete saved permissions and re-prompt on next load attempt.
+     */
+    async resetPluginPerms(id) {
+        try { fs.unlinkSync(this._permsFile(id)); } catch (_) {}
+        const cache = this._loadCache();
+        const existing = cache[id] || {};
+        // If it was loaded before, mark as 'loaded' but without saved perms it will re-prompt
+        cache[id] = { status: 'loaded', ...(existing.folder ? { folder: existing.folder } : {}) };
+        this._saveCache(cache);
+        // Remove from _loaded so the sync will attempt to re-run it (and re-prompt)
+        this._loaded = this._loaded.filter(x => x !== id);
+        await this._syncPlugins();
+        return { ok: true };
     }
 
     // -- Sandbox context builder -----------------------------------------------
@@ -1941,8 +2066,9 @@ class PluginVM {
                         if (e.message.startsWith('Permission denied')) throw e;
                     }
                 }
-                return global.fetch ? global.fetch(url, options)
-                    : Promise.reject(new Error('fetch not available in this Node version'));
+                return global.fetch
+                    ? global.fetch(url, options)
+                    : Promise.reject(new Error('fetch not available — upgrade Node.js to v18+'));
             },
 
             exec(cmd, args = []) {
@@ -1950,11 +2076,10 @@ class PluginVM {
                 const allowed = [...grantedPerms]
                     .filter(p => p.startsWith('system.exec:'))
                     .map(p => p.split(':')[1]);
-                const cmdBase = cmd.trim().split(/\s+/)[0].toLowerCase();
+                const cmdBase = path.basename(cmd).replace(/\.exe$/i, '').toLowerCase();
                 if (allowed.length > 0 && !allowed.includes(cmdBase)) {
                     throw new Error(`Permission denied: system.exec for "${cmdBase}" not granted`);
                 }
-                const { execFileSync } = require('child_process');
                 return execFileSync(cmd, args, { encoding: 'utf8' });
             },
 
@@ -1974,13 +2099,41 @@ class PluginVM {
                 );
             },
 
+            /**
+             * Launch a detached background process (fire-and-forget).
+             * Requires system.exec permission for the target command.
+             */
+            spawnDetached(cmd, args = [], opts = {}) {
+                if (!has('system.exec')) throw new Error('Permission denied: system.exec not granted');
+                const allowed = [...grantedPerms]
+                    .filter(p => p.startsWith('system.exec:'))
+                    .map(p => p.split(':')[1]);
+                const cmdBase = path.basename(cmd).replace(/\.exe$/i, '').toLowerCase();
+                if (allowed.length > 0 && !allowed.includes(cmdBase)) {
+                    throw new Error(`Permission denied: system.exec for "${cmdBase}" not granted`);
+                }
+                const child = spawn(cmd, args, {
+                    detached   : true,
+                    stdio      : 'ignore',
+                    windowsHide: true,
+                    ...opts,
+                });
+                child.unref();
+                return child.pid;
+            },
+
             provide(name, value) {
                 if (!has('ctx.provide')) throw new Error('Permission denied: ctx.provide not granted');
                 self._services.set(name, value);
             },
+
             use(name) {
+                // The built-in 'vm' management service requires vm.manage permission
+                if (name === 'vm' && !has('vm.manage')) {
+                    throw new Error('Permission denied: vm.manage not granted — declare it in plugin.json to access VM control');
+                }
                 if (!self._services.has(name)) {
-                    throw new Error(`Service "${name}" not found - is the plugin that provides it loaded?`);
+                    throw new Error(`Service "${name}" not found — is the plugin that provides it loaded?`);
                 }
                 return self._services.get(name);
             },
@@ -2019,7 +2172,7 @@ class PluginVM {
             require(id) {
                 if (ALLOWED_BUILTINS.has(id)) return require(id);
                 throw new Error(
-                    `[vm] Plugin "${meta.id}" tried to require("${id}") - ` +
+                    `[vm] Plugin "${meta.id}" tried to require("${id}") — ` +
                     `use the ctx API instead or request the appropriate permission.`
                 );
             },
@@ -2051,29 +2204,19 @@ class PluginVM {
 
         fs.mkdirSync(ctx.dataDir, { recursive: true });
         this._runPlugin(pluginDir, meta, ctx);
+
         this._loaded.push(meta.id);
+        this._pluginMetas.set(meta.id, meta);   // track for dependency graph
         console.log(`[vm] "${meta.id}" loaded`);
     }
 
     // -- _syncPlugins: scan folder, update cache, load new plugins/bundles -----
-    //
-    // Cache status meanings:
-    //   "loaded"  - successfully loaded (this session or a prior one)
-    //   "denied"  - user closed the dialog or clicked Deny
-    //   "error"   - plugin/bundle threw during load
-    //   "removed" - folder was deleted; cleared when folder comes back
-    //
-    // A "denied" or "error" item is NOT retried until it has been removed
-    // (status → "removed") and then re-added, forcing a fresh attempt.
 
     async _syncPlugins() {
         if (this._syncing) return;
         this._syncing = true;
-        try {
-            await this.__doSync();
-        } finally {
-            this._syncing = false;
-        }
+        try { await this.__doSync(); }
+        finally { this._syncing = false; }
     }
 
     async __doSync() {
@@ -2086,22 +2229,23 @@ class PluginVM {
 
         // ── Snapshot current folders ──────────────────────────────────────────
         const presentFolders = new Set(
-            fs.readdirSync(this.pluginsDir).filter(e =>
-                fs.statSync(path.join(this.pluginsDir, e)).isDirectory()
-            )
+            fs.readdirSync(this.pluginsDir).filter(e => {
+                try { return fs.statSync(path.join(this.pluginsDir, e)).isDirectory(); }
+                catch (_) { return false; }
+            })
         );
 
         // ── Mark removed items ────────────────────────────────────────────────
         for (const [id, entry] of Object.entries(cache)) {
             if (entry.status !== 'removed' && entry.folder && !presentFolders.has(entry.folder)) {
-                console.log(`[vm] "${id}" folder removed - will re-try if added back`);
+                console.log(`[vm] "${id}" folder removed — will re-try if added back`);
                 cache[id] = { ...entry, status: 'removed' };
             }
         }
 
         // ── Separate bundles from plugins ─────────────────────────────────────
-        const bundleManifests = {};   // bundleId -> meta
-        const pluginManifests = {};   // pluginId -> meta
+        const bundleManifests = {};
+        const pluginManifests = {};
 
         for (const folder of presentFolders) {
             const dir        = path.join(this.pluginsDir, folder);
@@ -2114,29 +2258,26 @@ class PluginVM {
                     meta._dir    = dir;
                     meta._folder = folder;
                     bundleManifests[meta.id] = meta;
-                } catch (e) {
-                    console.error(`[vm] skipping bundle "${folder}": ${e.message}`);
-                }
+                } catch (e) { console.error(`[vm] skipping bundle "${folder}": ${e.message}`); }
             } else if (fs.existsSync(pluginFile)) {
                 try {
                     const meta   = JSON.parse(fs.readFileSync(pluginFile, 'utf8'));
                     meta._dir    = dir;
                     meta._folder = folder;
                     pluginManifests[meta.id] = meta;
-                } catch (e) {
-                    console.error(`[vm] skipping plugin "${folder}": ${e.message}`);
-                }
+                } catch (e) { console.error(`[vm] skipping plugin "${folder}": ${e.message}`); }
             }
         }
 
-        // ── Decide whether to (re-)load each item ─────────────────────────────
+        // shouldLoad: returns true if this id should be loaded in this sync pass
         const shouldLoad = (id) => {
-            if (this._loaded.includes(id)) return false;   // already up this session
+            if (this._loaded.includes(id)) return false;
             const entry = cache[id];
-            if (!entry) return true;                        // first time ever seen
-            if (entry.status === 'removed') return true;   // came back after removal
-            if (entry.status === 'loaded')  return true;   // new session, was working
-            return false;                                   // denied/error - wait for drag cycle
+            if (!entry) return true;
+            if (entry.status === 'removed')  return true;
+            if (entry.status === 'loaded')   return true;   // new session
+            if (entry.status === 'disabled') return false;  // explicitly disabled
+            return false;                                   // denied / error — wait for drag cycle
         };
 
         // ── Load bundles first ────────────────────────────────────────────────
@@ -2149,10 +2290,12 @@ class PluginVM {
                 cache[bundleId] = { status: 'loaded', folder: bundleMeta._folder, type: 'bundle' };
             } catch (e) {
                 const denied = e.message.includes('denied by user');
-                const status = denied ? 'denied' : 'error';
                 console.log(`[vm] bundle "${bundleId}" ${denied ? 'denied by user' : 'failed: ' + e.message}`);
-                cache[bundleId] = { status, folder: bundleMeta._folder, type: 'bundle',
-                    ...(denied ? {} : { error: e.message }) };
+                cache[bundleId] = {
+                    status: denied ? 'denied' : 'error',
+                    folder: bundleMeta._folder, type: 'bundle',
+                    ...(denied ? {} : { error: e.message }),
+                };
             }
         }
 
@@ -2176,9 +2319,9 @@ class PluginVM {
                 cache[id] = { status: 'loaded', folder: meta._folder };
             } catch (e) {
                 const denied = e.message.includes('Permission denied by user');
-                const status = denied ? 'denied' : 'error';
                 console.log(`[vm] "${id}" ${denied ? 'denied by user' : 'failed: ' + e.message}`);
-                cache[id] = { status, folder: meta._folder, ...(denied ? {} : { error: e.message }) };
+                cache[id] = { status: denied ? 'denied' : 'error', folder: meta._folder,
+                    ...(denied ? {} : { error: e.message }) };
             }
         };
 
@@ -2208,6 +2351,17 @@ class PluginVM {
     // -- Public API ------------------------------------------------------------
 
     async loadAll() {
+        // Register the built-in VM control service before plugins load,
+        // so plugins declared with vm.manage permission can use it immediately.
+        this._services.set('vm', {
+            getAll         : ()     => this.getAllPlugins(),
+            getDependents  : (id)   => this.getAllDependents(id),
+            disable        : (id)   => this.disablePlugin(id),
+            enable         : (id)   => this.enablePlugin(id),
+            resetPerms     : (id)   => this.resetPluginPerms(id),
+            getLoaded      : ()     => [...this._loaded],
+        });
+
         await this._syncPlugins();
         this.watchPlugins();
     }
@@ -3873,6 +4027,627 @@ $FILE_PLUGINS_EXAMPLE_PLUGIN_JSON = @'
 
 $FILE_PLUGINS_EXAMPLE_TODO_TXT = @'
 Under construction
+'@
+
+$FILE_PLUGINS_MANAGER_INDEX_JS = @'
+'use strict';
+const http = require('http');
+const path = require('path');
+
+const PORT = 53422;
+
+module.exports = {
+    install(ctx) {
+        const log    = ctx.use('log');
+        const vmCtrl = ctx.use('vm');
+
+        // ── REST API + panel server ────────────────────────────────────────────
+        const server = ctx.listen(PORT, (req, res) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+            if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+            const url = req.url || '/';
+
+            // ── Panel HTML (served directly from this plugin's directory) ──────
+            if (req.method === 'GET' && (url === '/' || url === '/index.html')) {
+                const html = require('fs').readFileSync(path.join(__dirname, 'panel.html'));
+                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                res.end(html);
+                return;
+            }
+
+            // ── GET /api/plugins ───────────────────────────────────────────────
+            if (req.method === 'GET' && url === '/api/plugins') {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(vmCtrl.getAll()));
+                return;
+            }
+
+            // ── POST /api/plugins/:id/disable ──────────────────────────────────
+            if (req.method === 'POST' && /^\/api\/plugins\/[^/]+\/disable$/.test(url)) {
+                const id = url.split('/')[3];
+                const dependents = vmCtrl.getDependents(id);
+                if (dependents.length > 0) {
+                    // Return dependents list so the UI can confirm
+                    res.writeHead(409, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ conflict: true, dependents }));
+                    return;
+                }
+                const result = vmCtrl.disable(id);
+                log(`manager: disabled "${id}" (restart_required=${result.restart_required})`);
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(result));
+                return;
+            }
+
+            // ── POST /api/plugins/:id/disable-force ────────────────────────────
+            // Disables the plugin AND all dependents in one shot.
+            if (req.method === 'POST' && /^\/api\/plugins\/[^/]+\/disable-force$/.test(url)) {
+                const id = url.split('/')[3];
+                const dependents = vmCtrl.getDependents(id);
+                for (const dep of dependents) vmCtrl.disable(dep);
+                const result = vmCtrl.disable(id);
+                log(`manager: force-disabled "${id}" + dependents [${dependents.join(', ')}]`);
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ...result, also_disabled: dependents }));
+                return;
+            }
+
+            // ── POST /api/plugins/:id/enable ───────────────────────────────────
+            if (req.method === 'POST' && /^\/api\/plugins\/[^/]+\/enable$/.test(url)) {
+                const id = url.split('/')[3];
+                vmCtrl.enable(id).then(result => {
+                    log(`manager: enabled "${id}" (loaded=${result.loaded})`);
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify(result));
+                }).catch(err => {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ ok: false, error: err.message }));
+                });
+                return;
+            }
+
+            // ── POST /api/plugins/:id/reset-perms ─────────────────────────────
+            if (req.method === 'POST' && /^\/api\/plugins\/[^/]+\/reset-perms$/.test(url)) {
+                const id = url.split('/')[3];
+                vmCtrl.resetPerms(id).then(result => {
+                    log(`manager: reset permissions for "${id}"`);
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify(result));
+                }).catch(err => {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ ok: false, error: err.message }));
+                });
+                return;
+            }
+
+            res.writeHead(404); res.end('Not found');
+        });
+
+        server.on('error', err => log(`manager: server error — ${err.message}`, 'ERROR'));
+
+        // Register as a redirect panel in the UI plugin
+        const registerPanel = ctx.use('ui.registerPanel');
+        registerPanel('manager', `http://127.0.0.1:${PORT}/`, 'Plugin Manager');
+
+        log(`manager: panel server -> http://127.0.0.1:${PORT}`);
+        log('manager plugin loaded');
+    },
+};
+'@
+
+$FILE_PLUGINS_MANAGER_PANEL_HTML = @'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plugin Manager</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #08080d;
+  --surface:   #0f0f17;
+  --surface-2: #161620;
+  --surface-3: #1c1c28;
+  --border:    #22222e;
+  --text:      #e2e8f0;
+  --muted:     #64748b;
+  --dim:       #94a3b8;
+  --green:     #10b981;
+  --red:       #ef4444;
+  --orange:    #f97316;
+  --blue:      #3b82f6;
+  --yellow:    #eab308;
+  --mono:      'Cascadia Code', 'Consolas', monospace;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px;
+  -webkit-font-smoothing: antialiased; }
+
+/* ── Layout ── */
+body { display: flex; flex-direction: column; }
+
+.topbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.topbar-title { font-size: 16px; font-weight: 700; letter-spacing: -.3px; flex-shrink: 0; }
+.topbar-sub   { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+
+.search-wrap { flex: 1; max-width: 300px; position: relative; }
+.search-wrap svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; color: var(--muted); pointer-events: none; }
+#search { width: 100%; background: var(--surface-3); border: 1px solid var(--border);
+  border-radius: 7px; padding: 7px 10px 7px 32px; color: var(--text); font-size: 12px;
+  font-family: inherit; outline: none; }
+#search:focus { border-color: #3b3b55; }
+
+.filters { display: flex; gap: 6px; }
+.filter-btn { background: var(--surface-3); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 12px; font-size: 11px; font-weight: 600;
+  color: var(--dim); cursor: pointer; transition: all .15s; }
+.filter-btn:hover { border-color: #3b3b55; color: var(--text); }
+.filter-btn.active { background: var(--surface-2); border-color: #4b4b66; color: var(--text); }
+
+.refresh-btn { background: none; border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 10px; color: var(--dim); cursor: pointer; display: flex;
+  align-items: center; gap: 5px; font-size: 11px; font-family: inherit; transition: all .15s; }
+.refresh-btn:hover { border-color: #3b3b55; color: var(--text); }
+.refresh-btn svg { width: 12px; height: 12px; }
+
+.content { flex: 1; overflow-y: auto; padding: 20px 24px;
+  scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
+.content::-webkit-scrollbar { width: 5px; }
+.content::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 3px; }
+
+/* ── Plugin cards ── */
+.plugin-grid { display: flex; flex-direction: column; gap: 8px; }
+
+.plugin-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 16px;
+  transition: border-color .15s;
+}
+.plugin-card:hover { border-color: #2e2e3e; }
+.plugin-card.loaded  { border-left: 3px solid var(--green); }
+.plugin-card.denied  { border-left: 3px solid var(--red); }
+.plugin-card.error   { border-left: 3px solid var(--orange); }
+.plugin-card.disabled{ border-left: 3px solid var(--muted); }
+.plugin-card.bundle  { border-left: 3px solid var(--blue); }
+.plugin-card.new     { border-left: 3px solid var(--yellow); }
+
+.card-main { display: flex; align-items: flex-start; gap: 12px; }
+
+.card-avatar {
+  width: 36px; height: 36px; border-radius: 9px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; border: 1px solid var(--border);
+}
+
+.card-info { flex: 1; min-width: 0; }
+
+.card-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 3px; }
+.card-name  { font-size: 14px; font-weight: 600; }
+.card-ver   { font-size: 10px; color: var(--muted); background: var(--surface-3);
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+.card-badge { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 10px;
+  text-transform: uppercase; letter-spacing: .04em; }
+.badge-loaded   { background: #0d2e1f; color: var(--green); }
+.badge-denied   { background: #2d1212; color: var(--red); }
+.badge-error    { background: #2d1a0d; color: var(--orange); }
+.badge-disabled { background: var(--surface-3); color: var(--muted); }
+.badge-bundle   { background: #0d1a35; color: var(--blue); }
+.badge-new      { background: #2d2700; color: var(--yellow); }
+
+.card-desc { font-size: 12px; color: var(--muted); margin-bottom: 5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.card-meta { display: flex; gap: 12px; flex-wrap: wrap; }
+.card-meta-item { font-size: 10px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+.card-meta-item strong { color: var(--dim); }
+.dep-link { color: var(--dim); text-decoration: none; cursor: default; }
+.dep-link:hover { color: var(--text); text-decoration: underline; cursor: pointer; }
+
+.card-actions { display: flex; flex-direction: column; align-items: flex-end;
+  gap: 8px; justify-content: flex-start; }
+
+/* ── Toggle switch ── */
+.toggle-wrap { display: flex; align-items: center; gap: 6px; }
+.toggle-label { font-size: 10px; color: var(--muted); }
+
+.toggle { position: relative; display: inline-block; width: 38px; height: 22px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-track {
+  position: absolute; inset: 0; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--border);
+  border-radius: 22px; transition: background .2s, border-color .2s;
+}
+.toggle-thumb {
+  position: absolute; left: 3px; top: 3px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--muted); transition: transform .2s, background .2s;
+}
+.toggle input:checked + .toggle-track { background: #0d2e1f; border-color: var(--green); }
+.toggle input:checked + .toggle-track .toggle-thumb { background: var(--green); transform: translateX(16px); }
+.toggle input:disabled + .toggle-track { opacity: .4; cursor: default; }
+
+.action-btn {
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 9px; font-size: 10px; font-weight: 600; color: var(--muted);
+  cursor: pointer; font-family: inherit; transition: all .15s; white-space: nowrap;
+}
+.action-btn:hover { border-color: #3b3b55; color: var(--text); }
+
+.error-msg { font-size: 10px; color: var(--orange); font-family: var(--mono);
+  background: #2d1a0d; border-radius: 4px; padding: 3px 6px; max-width: 180px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Empty / loading ── */
+.empty { text-align: center; color: var(--muted); padding: 60px 0; font-size: 13px; }
+
+/* ── Confirm modal ── */
+.modal-backdrop {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.65); z-index: 100;
+  align-items: center; justify-content: center;
+}
+.modal-backdrop.show { display: flex; }
+.modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 24px; max-width: 360px; width: 100%; margin: 16px;
+  animation: pop .18s ease;
+}
+@keyframes pop { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+.modal h3 { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
+.modal p  { font-size: 12px; color: var(--dim); line-height: 1.6; margin-bottom: 14px; }
+.dep-list { font-size: 11px; font-family: var(--mono); color: var(--orange);
+  background: #2d1a0d; border-radius: 6px; padding: 8px 10px; margin-bottom: 16px;
+  list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.modal-actions button { border: none; border-radius: 7px; padding: 8px 18px;
+  font-size: 12px; font-weight: 600; font-family: inherit; cursor: pointer; }
+.btn-cancel { background: var(--surface-3); color: var(--dim);
+  border: 1px solid var(--border); }
+.btn-cancel:hover { background: var(--surface-2); }
+.btn-confirm { background: var(--red); color: #fff; }
+.btn-confirm:hover { opacity: .88; }
+
+/* ── Toast ── */
+.toast {
+  position: fixed; bottom: 20px; right: 20px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 16px; font-size: 12px; color: var(--text); z-index: 200;
+  animation: slidein .2s ease; pointer-events: none;
+}
+@keyframes slidein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <div class="topbar-title">Plugin Manager</div>
+    <div class="topbar-sub" id="topbar-sub">Loading...</div>
+  </div>
+
+  <div class="search-wrap">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input id="search" type="text" placeholder="Search plugins…" oninput="render()">
+  </div>
+
+  <div class="filters">
+    <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
+    <button class="filter-btn" onclick="setFilter('loaded',this)">Loaded</button>
+    <button class="filter-btn" onclick="setFilter('disabled',this)">Disabled</button>
+    <button class="filter-btn" onclick="setFilter('problem',this)">Problems</button>
+  </div>
+
+  <button class="refresh-btn" onclick="load()">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="23 4 23 10 17 10"/>
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+    </svg>
+    Refresh
+  </button>
+</div>
+
+<div class="content">
+  <div class="plugin-grid" id="grid"><div class="empty">Loading…</div></div>
+</div>
+
+<!-- Dependency confirmation modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal">
+    <h3 id="modal-title">Disable Plugin</h3>
+    <p id="modal-body"></p>
+    <ul class="dep-list" id="dep-list"></ul>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-confirm" id="modal-confirm">Disable All</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = 'http://127.0.0.1:53422';
+
+const AVATAR_COLORS = [
+  ['#1e3a5f','#60a5fa'], ['#1a3a2a','#34d399'], ['#3b1f4a','#c084fc'],
+  ['#3b2a10','#fbbf24'], ['#3b1a1a','#f87171'], ['#1a2f3b','#38bdf8'],
+];
+
+let plugins = [];
+let activeFilter = 'all';
+
+async function load() {
+  try {
+    const res = await fetch(`${API}/api/plugins`);
+    plugins = await res.json();
+    render();
+  } catch (e) {
+    document.getElementById('grid').innerHTML =
+      `<div class="empty">Could not reach manager API (${e.message})</div>`;
+  }
+}
+
+function setFilter(f, btn) {
+  activeFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  render();
+}
+
+function render() {
+  const q = document.getElementById('search').value.toLowerCase();
+  let list = plugins;
+
+  if (q) list = list.filter(p =>
+    p.name.toLowerCase().includes(q) ||
+    p.id.toLowerCase().includes(q) ||
+    (p.description || '').toLowerCase().includes(q)
+  );
+
+  if (activeFilter === 'loaded')   list = list.filter(p => p.loaded);
+  if (activeFilter === 'disabled') list = list.filter(p => p.status === 'disabled');
+  if (activeFilter === 'problem')  list = list.filter(p =>
+    p.status === 'error' || p.status === 'denied'
+  );
+
+  // Update subtitle
+  const loaded = plugins.filter(p => p.loaded).length;
+  document.getElementById('topbar-sub').textContent =
+    `${plugins.length} plugins · ${loaded} loaded`;
+
+  const grid = document.getElementById('grid');
+  if (list.length === 0) {
+    grid.innerHTML = '<div class="empty">No plugins match.</div>';
+    return;
+  }
+  grid.innerHTML = list.map(p => cardHTML(p)).join('');
+}
+
+function cardHTML(p) {
+  const ci = (p.name.charCodeAt(0) || 0) % AVATAR_COLORS.length;
+  const [bg, fg] = AVATAR_COLORS[ci];
+  const letter = (p.name[0] || '?').toUpperCase();
+
+  const statusClass = p.type === 'bundle' ? 'bundle' : (p.status || 'new');
+  const badgeLabel  = p.type === 'bundle' ? 'bundle' : (p.status || 'new');
+
+  const isEnabled = p.loaded || p.status === 'loaded' || p.status === 'new';
+  const canToggle = p.status !== 'error'; // errors need reset-perms first
+
+  const depsHtml = p.dependencies && p.dependencies.length
+    ? `<span class="card-meta-item">deps: ${
+        p.dependencies.map(d => `<a class="dep-link" onclick="scrollTo('${d}')">${d}</a>`).join(', ')
+      }</span>`
+    : '';
+
+  const usedByHtml = p.dependents && p.dependents.length
+    ? `<span class="card-meta-item">used by: ${
+        p.dependents.map(d => `<a class="dep-link" onclick="scrollTo('${d}')">${d}</a>`).join(', ')
+      }</span>`
+    : '';
+
+  const membersHtml = p.type === 'bundle' && p.members && p.members.length
+    ? `<span class="card-meta-item">includes: <strong>${p.members.join(', ')}</strong></span>`
+    : '';
+
+  const errorHtml = p.status === 'error' && p.error
+    ? `<div class="error-msg" title="${esc(p.error)}">${esc(p.error.slice(0,60))}</div>`
+    : '';
+
+  const restartNote = p.status === 'disabled' && p.loaded
+    ? `<div class="action-btn" style="color:var(--yellow);border-color:var(--yellow);cursor:default">restart needed</div>`
+    : '';
+
+  return `
+<div class="plugin-card ${statusClass}" id="card-${p.id}">
+  <div class="card-main">
+    <div class="card-avatar" style="background:${bg};color:${fg}">${letter}</div>
+    <div class="card-info">
+      <div class="card-name-row">
+        <span class="card-name">${esc(p.name)}</span>
+        <span class="card-ver">v${esc(p.version)}</span>
+        <span class="card-badge badge-${statusClass}">${badgeLabel}</span>
+      </div>
+      <div class="card-desc">${esc(p.description || '')}</div>
+      <div class="card-meta">
+        ${depsHtml}${usedByHtml}${membersHtml}
+      </div>
+      ${errorHtml}
+    </div>
+  </div>
+  <div class="card-actions">
+    <div class="toggle-wrap">
+      <label class="toggle" title="${isEnabled ? 'Disable' : 'Enable'} ${esc(p.name)}">
+        <input type="checkbox" ${isEnabled ? 'checked' : ''} ${!canToggle ? 'disabled' : ''}
+          onchange="togglePlugin('${p.id}', this.checked, this)">
+        <div class="toggle-track"><div class="toggle-thumb"></div></div>
+      </label>
+    </div>
+    ${restartNote}
+    <button class="action-btn" onclick="resetPerms('${p.id}')" title="Re-show permission dialog">
+      Reset perms
+    </button>
+  </div>
+</div>`;
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function scrollTo(id) {
+  const el = document.getElementById(`card-${id}`);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// ── Toggle (enable / disable) ───────────────────────────────────────────────
+async function togglePlugin(id, enable, checkbox) {
+  checkbox.disabled = true;
+  try {
+    if (enable) {
+      const res = await fetch(`${API}/api/plugins/${id}/enable`, { method: 'POST' });
+      const data = await res.json();
+      toast(`${id}: ${data.loaded ? 'loaded' : 'enabled (restart may be needed)'}`);
+    } else {
+      await disablePlugin(id, checkbox);
+      return; // disablePlugin handles re-enable on cancel
+    }
+    await load();
+  } catch (e) {
+    toast(`Error: ${e.message}`, true);
+    checkbox.checked = !checkbox.checked;
+    checkbox.disabled = false;
+  }
+}
+
+async function disablePlugin(id, checkbox) {
+  const res = await fetch(`${API}/api/plugins/${id}/disable`, { method: 'POST' });
+
+  if (res.status === 409) {
+    const data = await res.json();
+    // Show confirmation modal
+    showModal(
+      `Disable "${id}"`,
+      `This plugin has dependents that will also be disabled:`,
+      data.dependents,
+      async () => {
+        const r2 = await fetch(`${API}/api/plugins/${id}/disable-force`, { method: 'POST' });
+        const d2 = await r2.json();
+        toast(`Disabled "${id}" + ${d2.also_disabled.length} dependent(s). Restart to take full effect.`);
+        await load();
+      },
+      () => { checkbox.checked = true; checkbox.disabled = false; }
+    );
+  } else {
+    const data = await res.json();
+    toast(`Disabled "${id}"${data.restart_required ? ' — restart to take full effect' : ''}`);
+    await load();
+  }
+}
+
+async function resetPerms(id) {
+  if (!confirm(`Reset saved permissions for "${id}"? It will re-ask for permissions on next load.`)) return;
+  try {
+    await fetch(`${API}/api/plugins/${id}/reset-perms`, { method: 'POST' });
+    toast(`Permissions reset for "${id}"`);
+    await load();
+  } catch (e) {
+    toast(`Error: ${e.message}`, true);
+  }
+}
+
+// ── Modal ────────────────────────────────────────────────────────────────────
+let _modalOnConfirm = null;
+let _modalOnCancel  = null;
+
+function showModal(title, body, deps, onConfirm, onCancel) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').textContent  = body;
+  document.getElementById('dep-list').innerHTML = deps.map(d =>
+    `<li>• ${esc(d)}</li>`).join('');
+  _modalOnConfirm = onConfirm;
+  _modalOnCancel  = onCancel;
+  document.getElementById('modal-confirm').onclick = () => {
+    closeModal();
+    if (_modalOnConfirm) _modalOnConfirm();
+  };
+  document.getElementById('modal-backdrop').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('modal-backdrop').classList.remove('show');
+  if (_modalOnCancel) { _modalOnCancel(); _modalOnCancel = null; }
+  _modalOnConfirm = null;
+}
+
+document.getElementById('modal-backdrop').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+let _toastTimer = null;
+function toast(msg, isError = false) {
+  let el = document.querySelector('.toast');
+  if (el) el.remove();
+  clearTimeout(_toastTimer);
+  el = document.createElement('div');
+  el.className = 'toast';
+  el.style.borderColor = isError ? 'var(--red)' : 'var(--border)';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  _toastTimer = setTimeout(() => el.remove(), 3500);
+}
+
+load();
+</script>
+</body>
+</html>
+'@
+
+$FILE_PLUGINS_MANAGER_PLUGIN_JSON = @'
+{
+  "id": "manager",
+  "name": "Plugin Manager",
+  "version": "1.0.0",
+  "description": "Web-based plugin manager — enable, disable, inspect and manage all plugins.",
+  "main": "index.js",
+  "dependencies": {
+    "core": "*",
+    "ui": "*"
+  },
+  "permissions": [
+    "net.listen:53422",
+    "fs.read",
+    "ctx.provide",
+    "vm.manage"
+  ]
+}
 '@
 
 $FILE_PLUGINS_PHONE_LICENSE_TXT = @'
@@ -5584,6 +6359,156 @@ $FILE_PLUGINS_SETTINGS_PLUGIN_JSON = @'
 }
 '@
 
+$FILE_PLUGINS_TRAY_INDEX_JS = @'
+'use strict';
+const path = require('path');
+
+module.exports = {
+    install(ctx) {
+        const log  = ctx.use('log');
+        const port = ctx.use('ui.port');   // guaranteed available — ui is a dependency
+
+        // Path to the bundled PowerShell tray script
+        const ps1 = path.join(ctx.pluginDir, 'tray.ps1');
+
+        // App icon — falls back gracefully in the PS script if not present
+        const iconPath = path.join(ctx.dataDir, '..', '..', 'assets',
+            ctx.appName.toLowerCase() + '.ico');
+
+        try {
+            ctx.spawnDetached('powershell.exe', [
+                '-STA',
+                '-NonInteractive',
+                '-WindowStyle', 'Hidden',
+                '-ExecutionPolicy', 'Bypass',
+                '-File', ps1,
+                '-Port', String(port),
+                '-AppName', ctx.appName,
+                '-IconPath', iconPath,
+            ]);
+            log(`tray: icon started (UI -> http://127.0.0.1:${port})`);
+        } catch (e) {
+            log(`tray: failed to start icon — ${e.message}`, 'WARN');
+        }
+
+        log('tray plugin loaded');
+    },
+};
+'@
+
+$FILE_PLUGINS_TRAY_PLUGIN_JSON = @'
+{
+  "id": "tray",
+  "name": "System Tray",
+  "version": "1.0.0",
+  "description": "Windows system tray icon. Left-click or 'Open' to launch the panel UI; 'Exit' to shut down.",
+  "main": "index.js",
+  "dependencies": {
+    "core": "*",
+    "ui": "*"
+  },
+  "permissions": [
+    "system.exec:powershell",
+    "fs.read:${dataDir}",
+    "fs.write:${dataDir}"
+  ]
+}
+'@
+
+$FILE_PLUGINS_TRAY_TRAY_PS1 = @'
+<#
+.SYNOPSIS
+    COMPUTER system tray icon.
+    Runs in STA mode so WinForms works. Launched as a detached background
+    process by the tray plugin (plugins/tray/index.js).
+
+.PARAMETER Port
+    Port of the UI panel server (default 53421).
+
+.PARAMETER AppName
+    Display name shown in the tray tooltip and menu header.
+
+.PARAMETER IconPath
+    Full path to a .ico file. Falls back to a built-in system icon if not found.
+#>
+param(
+    [int]    $Port     = 53421,
+    [string] $AppName  = 'COMPUTER',
+    [string] $IconPath = ''
+)
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$url = "http://127.0.0.1:$Port"
+
+# ── Tray icon image ────────────────────────────────────────────────────────────
+if ($IconPath -and (Test-Path $IconPath)) {
+    $icon = [System.Drawing.Icon]::new($IconPath)
+} else {
+    # Fall back to the generic application icon from the shell
+    $icon = [System.Drawing.SystemIcons]::Application
+}
+
+# ── NotifyIcon ─────────────────────────────────────────────────────────────────
+$tray          = New-Object System.Windows.Forms.NotifyIcon
+$tray.Icon     = $icon
+$tray.Text     = $AppName
+$tray.Visible  = $true
+
+# ── Context menu ──────────────────────────────────────────────────────────────
+$menu = New-Object System.Windows.Forms.ContextMenuStrip
+
+# Header item (non-clickable label)
+$header           = New-Object System.Windows.Forms.ToolStripMenuItem
+$header.Text      = $AppName
+$header.Font      = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+$header.Enabled   = $false
+[void]$menu.Items.Add($header)
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+
+# Open panels
+$open           = New-Object System.Windows.Forms.ToolStripMenuItem
+$open.Text      = 'Open Panels'
+$open.Add_Click({ Start-Process $url })
+[void]$menu.Items.Add($open)
+
+# Open plugin manager directly
+$mgr           = New-Object System.Windows.Forms.ToolStripMenuItem
+$mgr.Text      = 'Plugin Manager'
+$mgr.Add_Click({ Start-Process "$url/manager" })
+[void]$menu.Items.Add($mgr)
+
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+
+# Exit (removes icon and stops the PS process; Node.js keeps running)
+$exit           = New-Object System.Windows.Forms.ToolStripMenuItem
+$exit.Text      = 'Hide Tray Icon'
+$exit.Add_Click({
+    $tray.Visible = $false
+    $tray.Dispose()
+    [System.Windows.Forms.Application]::Exit()
+})
+[void]$menu.Items.Add($exit)
+
+$tray.ContextMenuStrip = $menu
+
+# Left-click opens the panels URL
+$tray.Add_MouseClick({
+    param($s, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+        Start-Process $url
+    }
+})
+
+# ── Message loop (keeps icon alive until Exit is chosen) ─────────────────────
+[System.Windows.Forms.Application]::Run()
+
+# Cleanup
+$tray.Visible = $false
+$tray.Dispose()
+'@
+
 $FILE_PLUGINS_UI_INDEX_JS = @'
 'use strict';
 const path = require('path');
@@ -5651,9 +6576,14 @@ module.exports = {
         const events  = ctx.use('events');
         const port    = config.get('ui.port', 53421);
 
-        // Service: register a panel by id with a path to its HTML file
-        ctx.provide('ui.registerPanel', (id, htmlPath, title = id) => {
-            panels.set(id, { htmlPath: path.resolve(htmlPath), title });
+        // Service: register a panel.
+        // source can be a file path (served statically) or an http:// URL (redirected).
+        ctx.provide('ui.registerPanel', (id, source, title = id) => {
+            const isUrl = typeof source === 'string' && /^https?:\/\//.test(source);
+            panels.set(id, isUrl
+                ? { redirect: source, title }
+                : { htmlPath: path.resolve(source), title }
+            );
             log(`ui: registered panel "${id}" (${title})`);
             events.emit('ui:panel:registered', { id, title });
         });
@@ -5678,20 +6608,28 @@ module.exports = {
                 return;
             }
 
-            // Static asset within a panel dir: /<panelId>/file.ext
-            const subPath = (parsed.pathname || '/').replace(/^\/[^/]+/, '');
-            if (subPath && subPath !== '/') {
+            if (panels.has(panelId)) {
                 const panel = panels.get(panelId);
-                if (panel) {
+
+                // URL-based panel: redirect the browser to the external server
+                if (panel.redirect) {
+                    const suffix = (parsed.pathname || '/').replace(/^\/[^/]+/, '') || '';
+                    const search = parsed.search || '';
+                    res.writeHead(302, { Location: panel.redirect + suffix + search });
+                    res.end();
+                    return;
+                }
+
+                // Static asset within a panel dir: /<panelId>/sub/path.ext
+                const subPath = (parsed.pathname || '/').replace(/^\/[^/]+/, '');
+                if (subPath && subPath !== '/') {
                     const asset = path.join(path.dirname(panel.htmlPath), subPath);
                     serveFile(ctx, res, asset);
                     return;
                 }
-            }
 
-            // Panel HTML
-            if (panels.has(panelId)) {
-                serveFile(ctx, res, panels.get(panelId).htmlPath);
+                // Panel HTML
+                serveFile(ctx, res, panel.htmlPath);
                 return;
             }
 
@@ -5700,6 +6638,9 @@ module.exports = {
         });
 
         server.on('error', err => log(`ui: server error - ${err.message}`, 'ERROR'));
+
+        // Service: get the port the UI server is listening on
+        ctx.provide('ui.port', port);
 
         log(`ui: panel server -> http://127.0.0.1:${port}`);
         events.emit('ui:ready', { port });
@@ -6401,12 +7342,18 @@ $FILE_MANIFEST['plugins/example/index.js'] = $FILE_PLUGINS_EXAMPLE_INDEX_JS
 $FILE_MANIFEST['plugins/example/LICENSE.txt'] = $FILE_PLUGINS_EXAMPLE_LICENSE_TXT
 $FILE_MANIFEST['plugins/example/plugin.json'] = $FILE_PLUGINS_EXAMPLE_PLUGIN_JSON
 $FILE_MANIFEST['plugins/example/todo.txt'] = $FILE_PLUGINS_EXAMPLE_TODO_TXT
+$FILE_MANIFEST['plugins/manager/index.js'] = $FILE_PLUGINS_MANAGER_INDEX_JS
+$FILE_MANIFEST['plugins/manager/panel.html'] = $FILE_PLUGINS_MANAGER_PANEL_HTML
+$FILE_MANIFEST['plugins/manager/plugin.json'] = $FILE_PLUGINS_MANAGER_PLUGIN_JSON
 $FILE_MANIFEST['plugins/phone/LICENSE.txt'] = $FILE_PLUGINS_PHONE_LICENSE_TXT
 $FILE_MANIFEST['plugins/phone/todo.txt'] = $FILE_PLUGINS_PHONE_TODO_TXT
 $FILE_MANIFEST['plugins/settings/index.js'] = $FILE_PLUGINS_SETTINGS_INDEX_JS
 $FILE_MANIFEST['plugins/settings/LICENSE.txt'] = $FILE_PLUGINS_SETTINGS_LICENSE_TXT
 $FILE_MANIFEST['plugins/settings/panel.html'] = $FILE_PLUGINS_SETTINGS_PANEL_HTML
 $FILE_MANIFEST['plugins/settings/plugin.json'] = $FILE_PLUGINS_SETTINGS_PLUGIN_JSON
+$FILE_MANIFEST['plugins/tray/index.js'] = $FILE_PLUGINS_TRAY_INDEX_JS
+$FILE_MANIFEST['plugins/tray/plugin.json'] = $FILE_PLUGINS_TRAY_PLUGIN_JSON
+$FILE_MANIFEST['plugins/tray/tray.ps1'] = $FILE_PLUGINS_TRAY_TRAY_PS1
 $FILE_MANIFEST['plugins/ui/index.js'] = $FILE_PLUGINS_UI_INDEX_JS
 $FILE_MANIFEST['plugins/ui/LICENSE.txt'] = $FILE_PLUGINS_UI_LICENSE_TXT
 $FILE_MANIFEST['plugins/ui/plugin.json'] = $FILE_PLUGINS_UI_PLUGIN_JSON
