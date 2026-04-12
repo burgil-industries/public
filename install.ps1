@@ -1,3 +1,4 @@
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # ==============================================================================
 # Burgil Industries - C.O.M.P.U.T.E.R. Protocol Bootstrapper
 # ==============================================================================
@@ -194,6 +195,7 @@ if (-not $script:_mutex.WaitOne(0, $false)) {
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- Icon: download to temp, shown in installer window header PictureBox -----
 $script:iconTemp  = "$env:TEMP\$($APP_NAME_LOW)_setup.ico"
 $script:iconImage = $null   # System.Drawing.Image - for PictureBox (accepts PNG, ICO, anything)
@@ -223,6 +225,7 @@ if ($ICON_URL) {
         }
     }
 }
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- Custom controls: DarkButton + GlowProgressBar + DarkMode ----------------
 # Add-Type compiles C# source at runtime to create custom WinForms controls.
 # This is standard PowerShell WinForms practice for controls that System.Windows.Forms
@@ -235,6 +238,7 @@ $refs = @(
     [System.Reflection.Assembly]::GetAssembly([System.Drawing.Graphics]).Location
 )
 $_csButton = @"
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -367,6 +371,7 @@ public class DarkButton : Control {
 }
 "@
 $_csProgress = @"
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -432,6 +437,7 @@ public class DarkProgressBar : Control {
 }
 "@
 $_csDarkMode = @"
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 using System;
 using System.Runtime.InteropServices;
 
@@ -466,6 +472,7 @@ PAUSE
 '@
 
 $FILE_DATA_LIB_CHECK_UPDATE_PS1 = @'
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # Check for Updates
 $APP_NAME    = '__APP_NAME__'
 $APP_VERSION = '__APP_VERSION__'
@@ -612,6 +619,7 @@ sh.Run cmd, 1, False
 '@
 
 $FILE_DATA_LIB_ROUTER_PS1 = @'
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 param([string]$Uri)
 
 $AppName = '__APP_NAME__'
@@ -805,6 +813,7 @@ sh.Run Chr(34) & scriptDir & "..\__APP_NAME__.cmd" & Chr(34), 0, False
 '@
 
 $FILE_DATA_LIB_UNINSTALL_PS1 = @'
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 param([string]$PresetInstallDir = "")
 
 $AppName    = '__APP_NAME__'
@@ -1060,6 +1069,7 @@ sh.Run cmd, 0, False
 '@
 
 $FILE_DATA_SRC_APP_JS = @'
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 'use strict';
 const path = require('path');
 const http = require('http');
@@ -1223,14 +1233,6 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
   }
 
   /* -- Permission list --------------------------------------------------- */
-  .body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 11px 18px 8px;
-    scrollbar-width: thin;
-    scrollbar-color: var(--surface-3) transparent;
-  }
-
   .body::-webkit-scrollbar { width: 5px; }
   .body::-webkit-scrollbar-track { background: transparent; }
   .body::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 3px; }
@@ -1250,9 +1252,17 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
     letter-spacing: .06em;
     text-transform: uppercase;
     color: var(--text-muted);
-    margin: 8px 0 5px;
+    margin: 8px 0 2px;
     padding: 0 2px;
     opacity: .75;
+  }
+
+  .group-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+    padding: 0 2px;
+    line-height: 1.4;
   }
 
   .perm-list {
@@ -1270,9 +1280,44 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
     border-radius: 9px;
     padding: 9px 12px;
     transition: border-color .15s;
+    position: relative;
   }
 
   .perm-item:hover { border-color: #333344; }
+
+  /* -- Hover tooltip ---------------------------------------------------- */
+  .perm-tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: var(--surface-3);
+    border: 1px solid #333348;
+    border-radius: 7px;
+    padding: 8px 10px;
+    z-index: 10;
+    pointer-events: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,.5);
+  }
+
+  .perm-item:hover .perm-tooltip { display: block; }
+
+  .perm-tooltip-raw {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: #79c0ff;
+    word-break: break-all;
+    margin-bottom: 4px;
+  }
+
+  .perm-tooltip-line {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+
+  .perm-tooltip-line + .perm-tooltip-line { margin-top: 2px; }
 
   .perm-icon {
     width: 20px;
@@ -1314,6 +1359,48 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
     margin-top: 5px;
     line-height: 1.45;
     opacity: .85;
+  }
+
+  /* -- Scroll hint ------------------------------------------------------- */
+  .body-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 11px 18px 8px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--surface-3) transparent;
+  }
+
+  .scroll-hint {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 52px;
+    background: linear-gradient(to bottom, transparent, var(--bg));
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 6px;
+    pointer-events: none;
+    transition: opacity .25s;
+  }
+
+  .scroll-hint svg {
+    opacity: .55;
+    animation: bounce 1.4s ease-in-out infinite;
+  }
+
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50%       { transform: translateY(4px); }
   }
 
   /* -- Footer ------------------------------------------------------------ */
@@ -1399,14 +1486,19 @@ $FILE_DATA_SRC_DIALOG_HTML = @'
   </div>
 </div>
 
-<div class="body">
-  <div class="section-label">Requests access to</div>
-  <div class="perm-list" id="perm-list"></div>
+<div class="body-wrap">
+  <div class="body" id="body-scroll">
+    <div class="section-label">Requests access to</div>
+    <div class="perm-list" id="perm-list"></div>
+  </div>
+  <div class="scroll-hint" id="scroll-hint">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
 </div>
 
 <div class="footer">
   <button class="btn-deny"  id="btn-deny"  onclick="answer(false)">Deny</button>
-  <button class="btn-allow" id="btn-allow" onclick="answer(true)">Allow</button>
+  <button class="btn-allow" id="btn-allow" onclick="answer(true)" disabled>Scroll Down</button>
 </div>
 
 <div class="done-overlay" id="done"></div>
@@ -1436,6 +1528,18 @@ const ICONS = {
 const DEFAULT_ICON =
   SVG('<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>');
 
+// Extra technical detail shown in the hover tooltip per permission type
+const PERM_DETAILS = {
+  'fs.read'      : 'ctx.readFile(path) · ctx.readDir(path) · ctx.existsSync(path)',
+  'fs.write'     : 'ctx.writeFile(path, data)',
+  'net.listen'   : 'ctx.listen(port, handler) → http.Server',
+  'net.connect'  : 'ctx.fetch(url, options) → Promise<Response>',
+  'system.exec'  : 'ctx.exec(cmd, args) · ctx.execAsync(cmd) · ctx.spawnDetached(cmd, args)',
+  'ctx.provide'  : 'ctx.provide(name, value)  -  exposes a service other plugins can ctx.use()',
+  'ctx.broadcast': 'ctx.broadcast(msg)  -  fires vm:broadcast on the shared event bus',
+  'vm.manage'    : 'ctx.use("vm")  -  getAll · disable · enable · resetPerms · getDependents',
+};
+
 const AVATAR_COLORS = [
   ['#1e3a5f','#60a5fa'], ['#1a3a2a','#34d399'], ['#3b1f4a','#c084fc'],
   ['#3b2a10','#fbbf24'], ['#3b1a1a','#f87171'], ['#1a2f3b','#38bdf8'],
@@ -1457,14 +1561,26 @@ function renderPerm(perm, container, reasons) {
   const base  = colon === -1 ? perm : perm.slice(0, colon);
   const scope = colon === -1 ? null  : perm.slice(colon + 1);
 
-  const icon   = ICONS[base] || DEFAULT_ICON;
-  const desc   = PERM_DESCRIPTIONS[base] || base;
-  // Exact match first, then fall back to base type (e.g. "fs.read")
-  const reason = reasons && (reasons[perm] || reasons[base]) || null;
+  const icon    = ICONS[base] || DEFAULT_ICON;
+  const desc    = PERM_DESCRIPTIONS[base] || base;
+  const reason  = reasons && (reasons[perm] || reasons[base]) || null;
+  const detail  = PERM_DETAILS[base] || null;
+
+  // Tooltip lines
+  const tooltipLines = [];
+  if (scope) tooltipLines.push(`Scope: ${scope}`);
+  if (detail) tooltipLines.push(`API: ${detail}`);
+
+  const tooltip =
+    `<div class="perm-tooltip">` +
+      `<div class="perm-tooltip-raw">${perm}</div>` +
+      tooltipLines.map(l => `<div class="perm-tooltip-line">${l}</div>`).join('') +
+    `</div>`;
 
   const item = document.createElement('div');
   item.className = 'perm-item';
   item.innerHTML =
+    tooltip +
     `<span class="perm-icon">${icon}</span>` +
     `<div class="perm-text">` +
       `<div class="perm-label">${desc}</div>` +
@@ -1476,6 +1592,12 @@ function renderPerm(perm, container, reasons) {
 
 const data = JSON.parse(document.getElementById('d').textContent);
 const PERM_DESCRIPTIONS = data.permDescriptions;
+
+// Enforce intended window dimensions regardless of what the OS/browser opened.
+// window.resizeTo works in Edge/Chrome --app mode.
+if (data.winW && data.winH) {
+  try { window.resizeTo(data.winW, data.winH); } catch (_) {}
+}
 
 // Header
 document.getElementById('app-tag').textContent = data.appName;
@@ -1510,6 +1632,12 @@ if (data.type === 'bundle') {
     grp.className = 'group-label';
     grp.textContent = plugin.name;
     list.appendChild(grp);
+    if (plugin.description) {
+      const desc = document.createElement('div');
+      desc.className = 'group-desc';
+      desc.textContent = plugin.description;
+      list.appendChild(desc);
+    }
     for (const perm of plugin.permissions) {
       renderPerm(perm, list, plugin.permReasons);
     }
@@ -1520,6 +1648,30 @@ if (data.type === 'bundle') {
     renderPerm(perm, list, data.permReasons);
   }
 }
+
+// -- Scroll gate: Allow button unlocks once the user reaches the bottom --------
+const bodyEl     = document.getElementById('body-scroll');
+const hintEl     = document.getElementById('scroll-hint');
+const allowBtn   = document.getElementById('btn-allow');
+
+function checkScrolled() {
+  // scrollHeight - scrollTop - clientHeight <= threshold (2px tolerance)
+  const atBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight <= 2;
+  const canScroll = bodyEl.scrollHeight > bodyEl.clientHeight + 2;
+
+  if (!canScroll || atBottom) {
+    allowBtn.disabled   = false;
+    allowBtn.textContent = 'Allow';
+    hintEl.style.opacity = '0';
+    hintEl.style.pointerEvents = 'none';
+  } else {
+    hintEl.style.opacity = '1';
+  }
+}
+
+bodyEl.addEventListener('scroll', checkScrolled, { passive: true });
+// Check after a frame so layout is complete and scrollHeight is accurate
+requestAnimationFrame(checkScrolled);
 
 // Keep an SSE connection alive so the server knows when this window closes.
 // Edge closes the normal HTTP keep-alive connection right after page load,
@@ -1557,12 +1709,27 @@ async function answer(granted) {
 '@
 
 $FILE_DATA_SRC_VM_JS = @'
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 'use strict';
 const vm     = require('vm');
 const fs     = require('fs');
 const path   = require('path');
 const http   = require('http');
 const { exec, execFileSync, spawn } = require('child_process');
+
+// -- Feature flags: broad (unscoped) permissions that require an explicit opt-in
+// Maps permission prefix -> config key that must be true to allow it.
+const FEATURE_GATED_PERMS = {
+    'system.exec'  : 'features.unrestricted_exec',
+    'net.connect'  : 'features.unrestricted_network',
+};
+
+// Safe defaults shipped with the app - all advanced features disabled.
+const FEATURE_FLAG_DEFAULTS = {
+    'features.experimental'       : false,
+    'features.unrestricted_exec'  : false,
+    'features.unrestricted_network': false,
+};
 
 // -- Permission metadata -------------------------------------------------------
 const PERM_DESCRIPTIONS = {
@@ -1596,6 +1763,19 @@ class PluginVM {
         this._loaded      = [];          // plugin/bundle IDs loaded in this session
         this._pluginMetas = new Map();   // pluginId -> plugin.json contents
         this._syncing     = false;       // mutex: prevents concurrent _syncPlugins calls
+    }
+
+    // -- Feature flags (read from data/config.json, same file as core's Config) -
+
+    _readFeatureFlags() {
+        const cfgFile = path.join(this.dataDir, 'config.json');
+        let stored = {};
+        try { stored = JSON.parse(fs.readFileSync(cfgFile, 'utf8')); } catch (_) {}
+        const flags = {};
+        for (const [k, def] of Object.entries(FEATURE_FLAG_DEFAULTS)) {
+            flags[k] = k in stored ? stored[k] : def;
+        }
+        return flags;
     }
 
     // -- Plugin cache (data/plugins-cache.json) --------------------------------
@@ -1647,12 +1827,18 @@ class PluginVM {
     _openBrowser(url, w = 420, h = 380) {
         const edge = this._findEdge();
         if (edge) {
+            // A dedicated profile dir forces Edge to open a fresh window that
+            // actually respects --window-size (ignored when a profile is already open).
+            const profileDir = path.join(this.dataDir, 'edge-dialog-profile');
             spawn(edge, [
                 `--app=${url}`,
                 `--window-size=${w},${h}`,
+                `--user-data-dir=${profileDir}`,
                 '--no-first-run',
                 '--disable-extensions',
                 '--disable-default-apps',
+                '--disable-sync',
+                '--no-default-browser-check',
             ], { detached: true, stdio: 'ignore' }).unref();
         } else {
             exec(`cmd /c start "" "${url}"`);
@@ -1768,6 +1954,29 @@ class PluginVM {
     async _checkPermissions(pluginId, meta, requested) {
         if (!requested || requested.length === 0) return new Set();
 
+        // -- Feature-flag gate: check opt-in flags before prompting the user ---
+        const flags = this._readFeatureFlags();
+
+        // Block experimental plugins unless the experimental flag is enabled
+        if (meta.experimental === true && !flags['features.experimental']) {
+            throw new Error(
+                `[vm] Plugin "${pluginId}" is marked experimental. ` +
+                `Enable "features.experimental" in Settings to load it.`
+            );
+        }
+
+        // Block broad (unscoped) sensitive permissions unless the flag is on.
+        // Scoped variants like "system.exec:powershell" are allowed without a flag.
+        for (const perm of requested) {
+            const blocked = FEATURE_GATED_PERMS[perm]; // exact match = unscoped
+            if (blocked && !flags[blocked]) {
+                throw new Error(
+                    `[vm] Plugin "${pluginId}" requests "${perm}" (unrestricted). ` +
+                    `Enable "${blocked}" in Settings → Feature Flags to allow it.`
+                );
+            }
+        }
+
         const saved = this._loadSavedPerms(pluginId);
         if (saved !== null) return saved;
 
@@ -1791,6 +2000,8 @@ class PluginVM {
             permissions     : requested,
             permDescriptions: PERM_DESCRIPTIONS,
             permReasons     : expandedReasons,
+            winW            : 420,
+            winH,
         };
 
         const granted = await this._showPermDialog(dialogData, 420, winH);
@@ -1827,6 +2038,7 @@ class PluginVM {
                 return {
                     id          : meta.id,
                     name        : meta.name || meta.id,
+                    description : meta.description || '',
                     permissions : (meta.permissions || []).map(p =>
                         p.replace('${dataDir}', this.dataDir)
                          .replace('${pluginDataDir}', pluginDataDir)
@@ -1838,7 +2050,7 @@ class PluginVM {
 
         const totalPerms   = groups.reduce((n, g) => n + g.permissions.length, 0);
         const groupHeaders = groups.length;
-        const winH = Math.min(Math.max(206 + totalPerms * 54 + groupHeaders * 26, 290), 520);
+        const winH = Math.min(Math.max(216 + totalPerms * 58 + groupHeaders * 26, 290), 520);
 
         const dialogData = {
             type            : 'bundle',
@@ -1848,6 +2060,8 @@ class PluginVM {
             description     : bundleMeta.description || '',
             plugins         : groups,
             permDescriptions: PERM_DESCRIPTIONS,
+            winW            : 440,
+            winH,
         };
 
         const granted = await this._showPermDialog(dialogData, 440, winH);
@@ -2040,6 +2254,8 @@ class PluginVM {
         };
 
         const assertPath = (base, filePath) => {
+            // Unscoped permission (e.g. "fs.read" with no path) = unrestricted access
+            if (grantedPerms.has(base)) return;
             const roots = scopeRoots(base);
             if (roots.length === 0) throw new Error(`Permission denied: ${base} not granted`);
             const resolved = path.resolve(filePath);
@@ -2638,9 +2854,18 @@ $FILE_MANIFEST = [ordered]@{
 
 # --- Plugin files (auto-embedded from plugins/ by build.ps1) ---
 $FILE_PLUGINS_CORE_INDEX_JS = @'
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 'use strict';
 const EventEmitter = require('events');
 const path         = require('path');
+
+// Feature flags: safe defaults shipped with the app.
+// Only written on first run (if the key is absent); user values are never overwritten.
+const FEATURE_DEFAULTS = {
+    'features.experimental'        : false,
+    'features.unrestricted_exec'   : false,
+    'features.unrestricted_network': false,
+};
 
 // -- EventBus ------------------------------------------------------------------
 class EventBus extends EventEmitter {}
@@ -2691,6 +2916,11 @@ module.exports = {
         ctx.provide('events', bus);
         ctx.provide('config', config);
         ctx.provide('log',    log);
+
+        // Seed feature flags with safe defaults on first run
+        for (const [key, def] of Object.entries(FEATURE_DEFAULTS)) {
+            if (config.get(key) === undefined) config.set(key, def);
+        }
 
         log(`core plugin loaded`);
     }
@@ -3384,7 +3614,7 @@ $FILE_PLUGINS_ESSENTIALS_BUNDLE_JSON = @'
   "name": "COMPUTER Essentials",
   "version": "1.0.0",
   "description": "The core foundation every COMPUTER installation needs.",
-  "plugins": ["core", "ui", "settings"]
+  "plugins": ["core", "ui", "settings", "manager", "tray"]
 }
 '@
 
@@ -4054,6 +4284,7 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 '@
 
 $FILE_PLUGINS_EXAMPLE_INDEX_JS = @'
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 'use strict';
 const path = require('path');
 
@@ -4764,8 +4995,8 @@ Under construction
 '@
 
 $FILE_PLUGINS_MANAGER_INDEX_JS = @'
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 'use strict';
-const http = require('http');
 const path = require('path');
 
 const PORT = 53422;
@@ -4774,6 +5005,9 @@ module.exports = {
     install(ctx) {
         const log    = ctx.use('log');
         const vmCtrl = ctx.use('vm');
+
+        // Read panel HTML once at install time (avoids require('fs') in handlers)
+        const panelHtml = ctx.readFile(path.join(__dirname, 'panel.html'));
 
         // -- REST API + panel server --------------------------------------------
         const server = ctx.listen(PORT, (req, res) => {
@@ -4787,9 +5021,8 @@ module.exports = {
 
             // -- Panel HTML (served directly from this plugin's directory) ------
             if (req.method === 'GET' && (url === '/' || url === '/index.html')) {
-                const html = require('fs').readFileSync(path.join(__dirname, 'panel.html'));
                 res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-                res.end(html);
+                res.end(panelHtml);
                 return;
             }
 
@@ -6719,6 +6952,7 @@ Under construction
 '@
 
 $FILE_PLUGINS_SETTINGS_INDEX_JS = @'
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 'use strict';
 const path = require('path');
 
@@ -7512,6 +7746,48 @@ $FILE_PLUGINS_SETTINGS_PANEL_HTML = @'
   }
   .plugin-badge .ver { color: #475569; font-family: monospace; }
 
+  /* Feature flag toggles */
+  .flag-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid #1e293b;
+  }
+  .flag-row:last-child { border-bottom: none; }
+  .flag-label { font-size: 0.875rem; }
+  .flag-label small { display: block; color: #64748b; font-size: 0.75rem; margin-top: 2px; }
+
+  .toggle { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; inset: 0;
+    background: #334155; border-radius: 20px; cursor: pointer;
+    transition: background .2s;
+  }
+  .slider::before {
+    content: ''; position: absolute;
+    width: 14px; height: 14px; left: 3px; bottom: 3px;
+    background: #fff; border-radius: 50%;
+    transition: transform .2s;
+  }
+  .toggle input:checked + .slider { background: #6366f1; }
+  .toggle input:checked + .slider::before { transform: translateX(16px); }
+
+  .warn-badge {
+    display: inline-block;
+    background: #7c2d12;
+    color: #fca5a5;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+
   .field-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -7592,6 +7868,46 @@ $FILE_PLUGINS_SETTINGS_PANEL_HTML = @'
 <section>
   <h2>Loaded Plugins</h2>
   <div id="plugins-list"><span id="no-conn">Not connected</span></div>
+</section>
+
+<section id="section-flags">
+  <h2>Feature Flags</h2>
+
+  <div class="flag-row" id="flag-experimental">
+    <div class="flag-label">
+      Experimental plugins
+      <span class="warn-badge">risky</span>
+      <small>Allow loading plugins tagged <code>experimental: true</code> in their manifest</small>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" data-flag="features.experimental">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="flag-row" id="flag-exec">
+    <div class="flag-label">
+      Unrestricted system.exec
+      <span class="warn-badge">risky</span>
+      <small>Allow plugins to run any system command (not scoped to a specific binary)</small>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" data-flag="features.unrestricted_exec">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="flag-row" id="flag-net">
+    <div class="flag-label">
+      Unrestricted outbound network
+      <span class="warn-badge">risky</span>
+      <small>Allow plugins to connect to any host (not scoped to a specific domain)</small>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" data-flag="features.unrestricted_network">
+      <span class="slider"></span>
+    </label>
+  </div>
 </section>
 
 <section>
@@ -7684,6 +8000,12 @@ function onMessage(data) {
         if (cfgKey.value && cfgKey.value in cfg) {
             cfgValue.value = String(cfg[cfgKey.value]);
         }
+
+        // Sync feature flag toggles
+        document.querySelectorAll('[data-flag]').forEach(cb => {
+            const key = cb.getAttribute('data-flag');
+            if (key in cfg) cb.checked = !!cfg[key];
+        });
     }
 
     if (msg.type === 'settings:changed') {
@@ -7735,6 +8057,15 @@ document.getElementById('btn-refresh').addEventListener('click', () => {
     showToast('Refreshed');
 });
 
+// Feature flag toggles -> settings:set
+document.querySelectorAll('[data-flag]').forEach(cb => {
+    cb.addEventListener('change', () => {
+        const key = cb.getAttribute('data-flag');
+        send({ type: 'settings:set', key, value: cb.checked });
+        showToast(`${key} = ${cb.checked}`);
+    });
+});
+
 connect();
 </script>
 </body>
@@ -7759,6 +8090,7 @@ $FILE_PLUGINS_SETTINGS_PLUGIN_JSON = @'
 '@
 
 $FILE_PLUGINS_TRAY_INDEX_JS = @'
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 'use strict';
 const path = require('path');
 
@@ -8537,6 +8869,12 @@ $open.Text      = 'Open Panels'
 $open.Add_Click({ Start-Process $url })
 [void]$menu.Items.Add($open)
 
+# Open settings
+$settings           = New-Object System.Windows.Forms.ToolStripMenuItem
+$settings.Text      = 'Settings'
+$settings.Add_Click({ Start-Process "$url/settings" })
+[void]$menu.Items.Add($settings)
+
 # Open plugin manager directly
 $mgr           = New-Object System.Windows.Forms.ToolStripMenuItem
 $mgr.Text      = 'Plugin Manager'
@@ -8574,9 +8912,9 @@ $tray.Dispose()
 '@
 
 $FILE_PLUGINS_UI_INDEX_JS = @'
+// Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 'use strict';
 const path = require('path');
-const url  = require('url');
 
 // Panels registered by other plugins: id -> { htmlPath, title }
 const panels = new Map();
@@ -8662,8 +9000,8 @@ module.exports = {
         const server = ctx.listen(port, (req, res) => {
             res.setHeader('Access-Control-Allow-Origin', '*');
 
-            const parsed  = url.parse(req.url || '/');
-            const panelId = (parsed.pathname || '/').replace(/^\//, '').split('/')[0];
+            const parsedUrl = new URL(req.url || '/', 'http://localhost');
+            const panelId = (parsedUrl.pathname || '/').replace(/^\//, '').split('/')[0];
 
             // Root -> panel index
             if (!panelId) {
@@ -8677,15 +9015,15 @@ module.exports = {
 
                 // URL-based panel: redirect the browser to the external server
                 if (panel.redirect) {
-                    const suffix = (parsed.pathname || '/').replace(/^\/[^/]+/, '') || '';
-                    const search = parsed.search || '';
+                    const suffix = (parsedUrl.pathname || '/').replace(/^\/[^/]+/, '') || '';
+                    const search = parsedUrl.search || '';
                     res.writeHead(302, { Location: panel.redirect + suffix + search });
                     res.end();
                     return;
                 }
 
                 // Static asset within a panel dir: /<panelId>/sub/path.ext
-                const subPath = (parsed.pathname || '/').replace(/^\/[^/]+/, '');
+                const subPath = (parsedUrl.pathname || '/').replace(/^\/[^/]+/, '');
                 if (subPath && subPath !== '/') {
                     const asset = path.join(path.dirname(panel.htmlPath), subPath);
                     serveFile(ctx, res, asset);
@@ -9425,6 +9763,7 @@ $FILE_MANIFEST['plugins/ui/index.js'] = $FILE_PLUGINS_UI_INDEX_JS
 $FILE_MANIFEST['plugins/ui/LICENSE-AGPL3'] = $FILE_PLUGINS_UI_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/ui/plugin.json'] = $FILE_PLUGINS_UI_PLUGIN_JSON
 
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- RichTextBox styled append ----------------------
 function RTB-Write {
     param(
@@ -9538,6 +9877,7 @@ function Show-Dialog {
     $d.ShowDialog() | Out-Null
     return $res[0]
 }
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- Color palette --------
 
 $C_BG      = [System.Drawing.Color]::FromArgb(13,  17,  23)
@@ -9550,6 +9890,7 @@ $C_TEXT    = [System.Drawing.Color]::FromArgb(240, 246, 252)
 $C_DIM     = [System.Drawing.Color]::FromArgb(139, 148, 158)
 $C_SUCCESS = [System.Drawing.Color]::FromArgb(63,  185, 80)
 $C_DANGER  = [System.Drawing.Color]::FromArgb(248, 81,  73)
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- Control factories ----
 function New-Label {
     param(
@@ -9588,6 +9929,7 @@ function New-ActionButton {
     $b.Corner   = 0
     return $b
 }
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- Main form ------------
 $form                 = New-Object System.Windows.Forms.Form
 $form.Text            = "$APP_NAME $APP_VERSION Setup"
@@ -10902,11 +11244,13 @@ $pgUpdate.Controls.AddRange(@(
     $txtChangelog, $chkUpdateLicense,
     $btnApplyUpdate, $btnSkipUpdate, $btnUpdateClose
 ))
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- Page list ------------
 $allPages  = @($pgWelcome, $pgLicense, $pgLegal, $pgDeps, $pgLocation, $pgConfirm, $pgInstall, $pgDone)
 $pageNames = @("Welcome", "License Agreement", "Legal Notices", "Requirements", "Install Location", "Ready to Install", "Installing...", "Installation Complete")
 $script:idx = 0
 $script:skipCloseConfirm = $false
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- Install helpers ------
 
 function Test-ComputerRunning {
@@ -11013,6 +11357,7 @@ public class ShellNotify {
         Start-Process cmd.exe -WorkingDirectory $env:TEMP -ArgumentList "/c rd /s /q `"$Path`"" -Wait -WindowStyle Hidden
     }
 }
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- Installation ---------
 # This function performs all install steps sequentially.  Every step that
 # touches the registry, file system, or shell integration is explained inline.
@@ -11403,6 +11748,7 @@ public class ShellNotify {
 
     Show-Page 7
 }
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- Navigation -----------
 function Show-Page([int]$n) {
     if ($script:_depTimer) { $script:_depTimer.Stop() }  # cancel any pending dep check
@@ -11497,6 +11843,7 @@ function Show-Page([int]$n) {
         }
     }
 }
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- Button handlers ------
 $btnNext.Add_Click({
     if ($script:idx -eq 7) {
@@ -11525,6 +11872,7 @@ $btnBack.Add_Click({
 })
 
 $btnCancel.Add_Click({ $form.Close() })
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- Run ------------------
 $form.Add_Load({
     $regPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$APP_NAME"
