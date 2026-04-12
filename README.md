@@ -11,7 +11,7 @@ This repository is the **web root** served at [computer.burgil.dev](https://comp
 
 | File | How it's produced |
 |---|---|
-| `install.ps1` | Run `.\build.ps1` from the root repo. Assembled from `installer/` templates + embedded `app/` files + plugin files. |
+| [`install.ps1`](https://github.com/burgil-industries/public/blob/main/install.ps1) | Run [`build.ps1`](https://github.com/burgil-industries/computer/blob/main/build.ps1) from the root repo. Assembled from [`installer/`](https://github.com/burgil-industries/installer) templates + embedded [`app/`](https://github.com/burgil-industries/app) files + plugin files. |
 
 ```powershell
 # From the computer/ root:
@@ -33,7 +33,7 @@ This repository is the **web root** served at [computer.burgil.dev](https://comp
 
 ## Versioning
 
-`updates/latest.json` controls the version number embedded in `install.ps1`. Bump this file before running `build.ps1` to produce a new versioned build.
+[`updates/latest.json`](https://github.com/burgil-industries/public/blob/main/updates/latest.json) controls the version number embedded in [`install.ps1`](https://github.com/burgil-industries/public/blob/main/install.ps1). Bump this file before running [`build.ps1`](https://github.com/burgil-industries/computer/blob/main/build.ps1) to produce a new versioned build.
 
 ```json
 { "version": "1.0.1" }
