@@ -2432,7 +2432,7 @@ class PluginVM {
 module.exports = { PluginVM };
 '@
 
-$FILE_LICENSE_TXT = @'
+$FILE_LICENSE = @'
 COMPUTER Source License 1.0
 Copyright (c) 2026 COMPUTER
 
@@ -2568,7 +2568,7 @@ This repository contains the files that are **written to the user's machine** at
 
 ## How it works
 
-`build.ps1` (in the root repo) processes `installer/main.ps1`, which contains:
+[`build.ps1`](https://github.com/burgil-industries/computer/blob/main/build.ps1) (in the root repo) processes [`installer/main.ps1`](https://github.com/burgil-industries/installer/blob/main/main.ps1), which contains:
 
 ```
 {{EMBED_DIR:app}}
@@ -2589,14 +2589,14 @@ Variable naming rule: `FILE_` + relative path with `/`, `\`, `.`, `-` replaced b
 
 ## What to edit
 
-Edit files here to change what ends up on the user's machine. Then run `build.ps1` from the root repo to regenerate `public/install.ps1`.
+Edit files here to change what ends up on the user's machine. Then run [`build.ps1`](https://github.com/burgil-industries/computer/blob/main/build.ps1) from the root repo to regenerate [`public/install.ps1`](https://github.com/burgil-industries/public/blob/main/install.ps1).
 
 ```powershell
 # From the computer/ root:
 .\build.ps1
 ```
 
-Do **not** edit `public/install.ps1` directly - it is a generated file and will be overwritten.
+Do **not** edit [`public/install.ps1`](https://github.com/burgil-industries/public/blob/main/install.ps1) directly - it is a generated file and will be overwritten.
 
 ## Layout
 
@@ -2606,7 +2606,7 @@ data/
   src/          Application source (app.js, app.py, permissions.js)
   plugins.json  Installed plugins manifest
 __APP_NAME__.cmd  Launcher stub (name filled in at install time)
-LICENSE.txt
+LICENSE
 ```
 '@
 
@@ -2625,7 +2625,7 @@ $FILE_MANIFEST = [ordered]@{
     'data/src/app.py' = $FILE_DATA_SRC_APP_PY
     'data/src/dialog.html' = $FILE_DATA_SRC_DIALOG_HTML
     'data/src/vm.js' = $FILE_DATA_SRC_VM_JS
-    'LICENSE.txt' = $FILE_LICENSE_TXT
+    'LICENSE' = $FILE_LICENSE
     'README.md' = $FILE_README_MD
 }
 
@@ -2690,7 +2690,7 @@ module.exports = {
 };
 '@
 
-$FILE_PLUGINS_CORE_LICENSE_TXT = @'
+$FILE_PLUGINS_CORE_LICENSE_AGPL3 = @'
 
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
@@ -3381,7 +3381,7 @@ $FILE_PLUGINS_ESSENTIALS_BUNDLE_JSON = @'
 }
 '@
 
-$FILE_PLUGINS_ESSENTIALS_LICENSE_TXT = @'
+$FILE_PLUGINS_ESSENTIALS_LICENSE_AGPL3 = @'
 
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
@@ -4070,7 +4070,7 @@ module.exports = {
 };
 '@
 
-$FILE_PLUGINS_EXAMPLE_LICENSE_TXT = @'
+$FILE_PLUGINS_EXAMPLE_LICENSE_AGPL3 = @'
 
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
@@ -4866,7 +4866,7 @@ module.exports = {
 };
 '@
 
-$FILE_PLUGINS_MANAGER_LICENSE_TXT = @'
+$FILE_PLUGINS_MANAGER_LICENSE_AGPL3 = @'
 
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
@@ -6042,7 +6042,7 @@ $FILE_PLUGINS_MANAGER_PLUGIN_JSON = @'
 }
 '@
 
-$FILE_PLUGINS_PHONE_LICENSE_TXT = @'
+$FILE_PLUGINS_PHONE_LICENSE_AGPL3 = @'
 
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
@@ -6751,7 +6751,7 @@ module.exports = {
 };
 '@
 
-$FILE_PLUGINS_SETTINGS_LICENSE_TXT = @'
+$FILE_PLUGINS_SETTINGS_LICENSE_AGPL3 = @'
 
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
@@ -7788,7 +7788,7 @@ module.exports = {
 };
 '@
 
-$FILE_PLUGINS_TRAY_LICENSE_TXT = @'
+$FILE_PLUGINS_TRAY_LICENSE_AGPL3 = @'
 
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
@@ -8707,7 +8707,7 @@ module.exports = {
 };
 '@
 
-$FILE_PLUGINS_UI_LICENSE_TXT = @'
+$FILE_PLUGINS_UI_LICENSE_AGPL3 = @'
 
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
@@ -9392,30 +9392,30 @@ $FILE_PLUGINS_UI_PLUGIN_JSON = @'
 '@
 
 $FILE_MANIFEST['plugins/core/index.js'] = $FILE_PLUGINS_CORE_INDEX_JS
-$FILE_MANIFEST['plugins/core/LICENSE.txt'] = $FILE_PLUGINS_CORE_LICENSE_TXT
+$FILE_MANIFEST['plugins/core/LICENSE-AGPL3'] = $FILE_PLUGINS_CORE_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/core/plugin.json'] = $FILE_PLUGINS_CORE_PLUGIN_JSON
 $FILE_MANIFEST['plugins/essentials/bundle.json'] = $FILE_PLUGINS_ESSENTIALS_BUNDLE_JSON
-$FILE_MANIFEST['plugins/essentials/LICENSE.txt'] = $FILE_PLUGINS_ESSENTIALS_LICENSE_TXT
+$FILE_MANIFEST['plugins/essentials/LICENSE-AGPL3'] = $FILE_PLUGINS_ESSENTIALS_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/example/index.js'] = $FILE_PLUGINS_EXAMPLE_INDEX_JS
-$FILE_MANIFEST['plugins/example/LICENSE.txt'] = $FILE_PLUGINS_EXAMPLE_LICENSE_TXT
+$FILE_MANIFEST['plugins/example/LICENSE-AGPL3'] = $FILE_PLUGINS_EXAMPLE_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/example/plugin.json'] = $FILE_PLUGINS_EXAMPLE_PLUGIN_JSON
 $FILE_MANIFEST['plugins/example/todo.txt'] = $FILE_PLUGINS_EXAMPLE_TODO_TXT
 $FILE_MANIFEST['plugins/manager/index.js'] = $FILE_PLUGINS_MANAGER_INDEX_JS
-$FILE_MANIFEST['plugins/manager/LICENSE.txt'] = $FILE_PLUGINS_MANAGER_LICENSE_TXT
+$FILE_MANIFEST['plugins/manager/LICENSE-AGPL3'] = $FILE_PLUGINS_MANAGER_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/manager/panel.html'] = $FILE_PLUGINS_MANAGER_PANEL_HTML
 $FILE_MANIFEST['plugins/manager/plugin.json'] = $FILE_PLUGINS_MANAGER_PLUGIN_JSON
-$FILE_MANIFEST['plugins/phone/LICENSE.txt'] = $FILE_PLUGINS_PHONE_LICENSE_TXT
+$FILE_MANIFEST['plugins/phone/LICENSE-AGPL3'] = $FILE_PLUGINS_PHONE_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/phone/todo.txt'] = $FILE_PLUGINS_PHONE_TODO_TXT
 $FILE_MANIFEST['plugins/settings/index.js'] = $FILE_PLUGINS_SETTINGS_INDEX_JS
-$FILE_MANIFEST['plugins/settings/LICENSE.txt'] = $FILE_PLUGINS_SETTINGS_LICENSE_TXT
+$FILE_MANIFEST['plugins/settings/LICENSE-AGPL3'] = $FILE_PLUGINS_SETTINGS_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/settings/panel.html'] = $FILE_PLUGINS_SETTINGS_PANEL_HTML
 $FILE_MANIFEST['plugins/settings/plugin.json'] = $FILE_PLUGINS_SETTINGS_PLUGIN_JSON
 $FILE_MANIFEST['plugins/tray/index.js'] = $FILE_PLUGINS_TRAY_INDEX_JS
-$FILE_MANIFEST['plugins/tray/LICENSE.txt'] = $FILE_PLUGINS_TRAY_LICENSE_TXT
+$FILE_MANIFEST['plugins/tray/LICENSE-AGPL3'] = $FILE_PLUGINS_TRAY_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/tray/plugin.json'] = $FILE_PLUGINS_TRAY_PLUGIN_JSON
 $FILE_MANIFEST['plugins/tray/tray.ps1'] = $FILE_PLUGINS_TRAY_TRAY_PS1
 $FILE_MANIFEST['plugins/ui/index.js'] = $FILE_PLUGINS_UI_INDEX_JS
-$FILE_MANIFEST['plugins/ui/LICENSE.txt'] = $FILE_PLUGINS_UI_LICENSE_TXT
+$FILE_MANIFEST['plugins/ui/LICENSE-AGPL3'] = $FILE_PLUGINS_UI_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/ui/plugin.json'] = $FILE_PLUGINS_UI_PLUGIN_JSON
 
 # --- RichTextBox styled append ----------------------
@@ -10833,8 +10833,8 @@ $btnApplyUpdate.Add_Click({
             }
             # Update license if this patch requires it
             if ($patch.requiresLicense -and $patch.newLicense) {
-                Write-Log "  updating LICENSE.txt"
-                $licPath = Join-Path $dir "LICENSE.txt"
+                Write-Log "  updating LICENSE"
+                $licPath = Join-Path $dir "LICENSE"
                 [System.IO.File]::WriteAllText($licPath, $patch.newLicense, (New-Object System.Text.UTF8Encoding($false)))
             }
             # Update registry after each patch so partial progress is saved
