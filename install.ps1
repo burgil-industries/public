@@ -11872,7 +11872,8 @@ public class ShellNotify {
                    $cmd = "wscript.exe `"$lib\router.vbs`" `"%1`""
                    New-Item -Path "$protoKey\shell\open\command" -Value $cmd -Force | Out-Null
                } else {
-                   Write-Log "Protocol: skipping ($($APP_PROTO)://)"
+                   Write-Log "Protocol: removing ($($APP_PROTO)://)"
+                   Remove-Item -Path "HKCU:\SOFTWARE\Classes\$APP_PROTO" -Recurse -Force -ErrorAction SilentlyContinue
                }
            }},
 
@@ -12071,9 +12072,9 @@ public class ShellNotify {
     )
 
     Write-Log "Installation started - dir: $dir"
-    Write-Log ("Features: shortcut={0} startup={1} path={2} context-menu={3} send-to={4} start-menu={5} file-assoc={6} new-menu={7}" -f
+    Write-Log ("Features: shortcut={0} startup={1} path={2} context-menu={3} send-to={4} start-menu={5} file-assoc={6} proto={7} new-menu={8}" -f
         $chkShortcut.Checked, $chkStartup.Checked, $chkAddPath.Checked,
-        $chkOpenWith.Checked, $chkSendTo.Checked, $chkStartMenu.Checked, $chkFileAssoc.Checked, $chkNewMenu.Checked)
+        $chkOpenWith.Checked, $chkSendTo.Checked, $chkStartMenu.Checked, $chkFileAssoc.Checked, $chkProto.Checked, $chkNewMenu.Checked)
     foreach ($step in $steps) {
         $lblStep.Text      = $step.Msg
         $progressBar.Value = $step.Pct
@@ -12146,6 +12147,7 @@ function Show-Page([int]$n) {
                 $chkSendTo.Checked    = Test-Path "$env:APPDATA\Microsoft\Windows\SendTo\$APP_NAME.lnk"
                 $chkStartMenu.Checked = Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\$APP_NAME.lnk"
                 $chkFileAssoc.Checked = Test-Path "HKCU:\SOFTWARE\Classes\$APP_NAME.File"
+                $chkProto.Checked     = Test-Path "HKCU:\SOFTWARE\Classes\$APP_PROTO"
                 $chkNewMenu.Checked   = Test-Path "HKCU:\SOFTWARE\Classes\.$APP_NAME_LOW\ShellNew"
                 $chkNewMenu.Enabled   = $chkFileAssoc.Checked
             } else {
