@@ -193,6 +193,22 @@ if (-not $script:_mutex.WaitOne(0, $false)) {
     exit
 }
 
+# Check if the uninstaller is running
+$_uninstMutex = New-Object System.Threading.Mutex($false, "Global\$($APP_NAME)_Uninstall_Mutex")
+if (-not $_uninstMutex.WaitOne(0, $false)) {
+    Add-Type -AssemblyName System.Windows.Forms
+    [System.Windows.Forms.MessageBox]::Show(
+        "$APP_NAME is currently being uninstalled. Please wait for the uninstaller to finish before running Setup.", "$APP_NAME Setup",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    $_uninstMutex.Dispose()
+    $script:_mutex.ReleaseMutex()
+    $script:_mutex.Dispose()
+    exit
+}
+$_uninstMutex.ReleaseMutex()
+$_uninstMutex.Dispose()
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 # Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
@@ -833,6 +849,35 @@ if (-not $_mutex.WaitOne(0, $false)) {
     $_mutex.Dispose()
     exit
 }
+
+# Check if the installer is running
+$_setupMutex = New-Object System.Threading.Mutex($false, "Global\$($AppName)_Setup_Mutex")
+if (-not $_setupMutex.WaitOne(0, $false)) {
+    [System.Windows.Forms.MessageBox]::Show(
+        "$AppName Setup is currently running. Please close it before uninstalling.", "$AppName Uninstaller",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    $_setupMutex.Dispose()
+    $_mutex.ReleaseMutex()
+    $_mutex.Dispose()
+    exit
+}
+$_setupMutex.ReleaseMutex()
+$_setupMutex.Dispose()
+
+# Check if the app is running
+try {
+    $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+    if ($listeners | Where-Object { $_.Port -eq 53420 }) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "$AppName is currently running. Please close it before uninstalling.", "$AppName Uninstaller",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        $_mutex.ReleaseMutex()
+        $_mutex.Dispose()
+        exit
+    }
+} catch {}
 
 Add-Type -TypeDefinition @"
 using System;
@@ -3909,7 +3954,7 @@ $FILE_PLUGINS_CORE_PLUGIN_JSON = @'
 }
 '@
 
-$FILE_PLUGINS_ESSENTIALS_BUNDLE_JSON = @'
+$FILE_PLUGINS_ESSENTIALS_BUNDLE_COMPUTER = @'
 {
   "id": "essentials",
   "name": "COMPUTER Essentials",
@@ -10078,7 +10123,7 @@ $FILE_PLUGINS_UI_PLUGIN_JSON = @'
 $FILE_MANIFEST['plugins/core/index.js'] = $FILE_PLUGINS_CORE_INDEX_JS
 $FILE_MANIFEST['plugins/core/LICENSE-AGPL3'] = $FILE_PLUGINS_CORE_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/core/plugin.json'] = $FILE_PLUGINS_CORE_PLUGIN_JSON
-$FILE_MANIFEST['plugins/essentials/bundle.json'] = $FILE_PLUGINS_ESSENTIALS_BUNDLE_JSON
+$FILE_MANIFEST['plugins/essentials/bundle.computer'] = $FILE_PLUGINS_ESSENTIALS_BUNDLE_COMPUTER
 $FILE_MANIFEST['plugins/essentials/LICENSE-AGPL3'] = $FILE_PLUGINS_ESSENTIALS_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/example/index.js'] = $FILE_PLUGINS_EXAMPLE_INDEX_JS
 $FILE_MANIFEST['plugins/example/LICENSE-AGPL3'] = $FILE_PLUGINS_EXAMPLE_LICENSE_AGPL3
@@ -11833,7 +11878,7 @@ public class ShellNotify {
                # Uninstall shortcut
                $uninst = $wsh.CreateShortcut("$dir\Uninstall.lnk")
                $uninst.TargetPath        = "wscript.exe"
-               $uninst.Arguments         = "`"$lib\uninstall.vbs`""
+               $uninst.Arguments         = "`"$lib\repair.vbs`""
                $uninst.WorkingDirectory  = $env:TEMP
                $uninst.WindowStyle       = 7
                $uninst.Description       = "Uninstall $APP_NAME"
@@ -11890,7 +11935,7 @@ public class ShellNotify {
                    DisplayVersion  = $APP_VERSION
                    Publisher       = $PUBLISHER
                    InstallLocation = $dir
-                   UninstallString = "wscript.exe `"$lib\uninstall.vbs`""
+                   UninstallString = "wscript.exe `"$lib\repair.vbs`""
                }
                foreach ($p in $props.GetEnumerator()) {
                    New-ItemProperty -Path $key -Name $p.Key -Value $p.Value -PropertyType String -Force | Out-Null
