@@ -182,8 +182,12 @@ try { [Console]::TreatControlCAsInput = $true } catch {}
 # Prevents two copies of the installer from running at the same time.
 # Named mutex is the standard Windows mechanism for this; the name is
 # scoped to this application and does not affect any other process.
+# AbandonedMutexException means the previous owner crashed - treat as free.
 $script:_mutex = New-Object System.Threading.Mutex($false, "Global\$($APP_NAME)_Setup_Mutex")
-if (-not $script:_mutex.WaitOne(0, $false)) {
+$_mutexOwned = $false
+try { $_mutexOwned = $script:_mutex.WaitOne(0, $false) }
+catch [System.Threading.AbandonedMutexException] { $_mutexOwned = $true }
+if (-not $_mutexOwned) {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show(
         "$APP_NAME Setup is already running.", "$APP_NAME Setup",
@@ -195,7 +199,10 @@ if (-not $script:_mutex.WaitOne(0, $false)) {
 
 # Check if the uninstaller is running
 $_uninstMutex = New-Object System.Threading.Mutex($false, "Global\$($APP_NAME)_Uninstall_Mutex")
-if (-not $_uninstMutex.WaitOne(0, $false)) {
+$_uninstOwned = $false
+try { $_uninstOwned = $_uninstMutex.WaitOne(0, $false) }
+catch [System.Threading.AbandonedMutexException] { $_uninstOwned = $true }
+if (-not $_uninstOwned) {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show(
         "$APP_NAME is currently being uninstalled. Please wait for the uninstaller to finish before running Setup.", "$APP_NAME Setup",
@@ -626,6 +633,58 @@ Set sh = CreateObject("WScript.Shell")
 sh.Run "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -File """ & scriptDir & "check-update.ps1""", 0, False
 '@
 
+$FILE_DATA_LIB_OPEN_PS1 = @'
+# Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
+# Handles file/folder open via file association and right-click menu.
+# Posts to the running app's hook endpoint; falls back depending on file type.
+param([string]$FilePath)
+
+$AppName = '__APP_NAME__'
+
+if (-not $FilePath) { exit }
+
+# Determine the hook to fire based on file type
+$isComputerFile = $FilePath -match '\.computer$'
+$hook = if ($isComputerFile) { 'app:file-open' } else { 'app:open' }
+
+# Try handing off to the running app
+$handed = $false
+if (Test-Path $FilePath) {
+    try {
+        $json = @{ hook = $hook; data = @{ path = $FilePath } } | ConvertTo-Json -Compress
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add("Content-Type", "application/json")
+        $result = $wc.UploadString("http://127.0.0.1:53420/hook", $json)
+        $handed = $true
+    } catch {
+        # App not running or request failed
+    }
+}
+
+if (-not $handed) {
+    if ($isComputerFile) {
+        # App not running - show a notice instead of opening in notepad
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.MessageBox]::Show(
+            "$AppName is not running.`n`nStart $AppName first, then open this file.",
+            "$AppName",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    }
+    # Non-.computer files: do nothing if app is not running
+    # (right-click "Open with COMPUTER" only makes sense when the app is running)
+}
+'@
+
+$FILE_DATA_LIB_OPEN_VBS = @'
+If WScript.Arguments.Count = 0 Then WScript.Quit
+Dim filePath, scriptDir, sh
+filePath = WScript.Arguments(0)
+scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
+Set sh = CreateObject("WScript.Shell")
+sh.Run "powershell.exe -NoProfile -WindowStyle Hidden -File """ & scriptDir & "open.ps1"" """ & filePath & """", 0, False
+'@
+
 $FILE_DATA_LIB_REPAIR_VBS = @'
 Set sh = CreateObject("WScript.Shell")
 scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
@@ -794,124 +853,18 @@ try {
         'open' {
             $filePath = $query['path']
             if ($filePath -and $filePath -match '\.computer$' -and (Test-Path $filePath)) {
-                # Fire file-open hook
-                Fire-Hook 'app:file-open' @{ path = $filePath }
-
-                # Validate .computer file
-                $fileName = [System.IO.Path]::GetFileName($filePath)
-                $rawContent = $null
-                $jsonObj = $null
-                $errors = @()
-
+                # Hand off to the running app instantly - it handles validation & UI.
+                # If the app is not running, fall back to opening in the default editor.
+                $handed = $false
                 try {
-                    $rawContent = Get-Content $filePath -Raw -ErrorAction Stop
-                } catch {
-                    $errors += "Cannot read file: $_"
-                }
-
-                if ($rawContent -ne $null) {
-                    try {
-                        $jsonObj = $rawContent | ConvertFrom-Json -ErrorAction Stop
-                    } catch {
-                        $errors += "Invalid JSON: $_"
-                    }
-                }
-
-                if ($jsonObj -ne $null) {
-                    $isBundle = $fileName -eq 'bundle.computer'
-                    $isPlugin = $fileName -eq 'plugin.computer'
-
-                    if (-not $isBundle -and -not $isPlugin) {
-                        # Detect type from content
-                        if ($jsonObj.plugins) { $isBundle = $true }
-                        elseif ($jsonObj.main -or $jsonObj.dependencies) { $isPlugin = $true }
-                        else { $isPlugin = $true }  # default
-                    }
-
-                    if ($isBundle) {
-                        if (-not $jsonObj.id -or $jsonObj.id -isnot [string] -or -not $jsonObj.id.Trim()) {
-                            $errors += '"id" is required and must be a non-empty string'
-                        } elseif ($jsonObj.id -notmatch '^[a-z0-9][a-z0-9\-_]*$') {
-                            $errors += "`"id`" `"$($jsonObj.id)`" is invalid - use lowercase letters, digits, hyphens, or underscores"
-                        }
-                        if (-not $jsonObj.name -or $jsonObj.name -isnot [string] -or -not $jsonObj.name.Trim()) {
-                            $errors += '"name" is required and must be a non-empty string'
-                        }
-                        if (-not $jsonObj.plugins -or $jsonObj.plugins.Count -eq 0) {
-                            $errors += '"plugins" must be a non-empty array of plugin IDs'
-                        } elseif ($jsonObj.plugins) {
-                            for ($i = 0; $i -lt $jsonObj.plugins.Count; $i++) {
-                                $p = $jsonObj.plugins[$i]
-                                if (-not $p -or $p -isnot [string] -or -not $p.Trim()) {
-                                    $errors += "`"plugins[$i]`" must be a non-empty string plugin ID"
-                                }
-                            }
-                        }
-                    } else {
-                        # Plugin validation
-                        if (-not $jsonObj.id -or $jsonObj.id -isnot [string] -or -not $jsonObj.id.Trim()) {
-                            $errors += '"id" is required and must be a non-empty string'
-                        } elseif ($jsonObj.id -notmatch '^[a-z0-9][a-z0-9\-_]*$') {
-                            $errors += "`"id`" `"$($jsonObj.id)`" is invalid - use lowercase letters, digits, hyphens, or underscores"
-                        }
-                        if (-not $jsonObj.name -or $jsonObj.name -isnot [string] -or -not $jsonObj.name.Trim()) {
-                            $errors += '"name" is required and must be a non-empty string'
-                        }
-                        if ($jsonObj.version -ne $null -and $jsonObj.version -isnot [string]) {
-                            $errors += '"version" must be a string'
-                        }
-                        if ($jsonObj.dependencies -ne $null -and $jsonObj.dependencies -is [array]) {
-                            $errors += '"dependencies" must be an object, e.g. { "core": "*" }'
-                        }
-                        if ($jsonObj.permissions -ne $null -and $jsonObj.permissions -isnot [array]) {
-                            $errors += '"permissions" must be an array of strings'
-                        }
-                        # Check main file exists
-                        $dir = [System.IO.Path]::GetDirectoryName($filePath)
-                        $mainFile = if ($jsonObj.main) { $jsonObj.main } else { "index.js" }
-                        $mainPath = Join-Path $dir $mainFile
-                        if (-not (Test-Path $mainPath)) {
-                            $errors += "Main file `"$mainFile`" not found in plugin directory"
-                        }
-                    }
-                }
-
-                $type = if ($isBundle) { "Bundle" } else { "Plugin" }
-
-                if ($errors.Count -gt 0) {
-                    $msg = "$type manifest has $($errors.Count) error(s):`n`n"
-                    foreach ($e in $errors) { $msg += "  - $e`n" }
-                    $msg += "`nWould you like to open the file in your code editor to fix it?"
-                    $result = [System.Windows.Forms.MessageBox]::Show(
-                        $msg, "$AppName - Invalid $type",
-                        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                        [System.Windows.Forms.MessageBoxIcon]::Warning)
-                    if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
-                        Start-Process $filePath
-                    }
-                } else {
-                    $msg = "$type manifest is valid.`n`n"
-                    $msg += "ID: $($jsonObj.id)`n"
-                    $msg += "Name: $($jsonObj.name)`n"
-                    if ($jsonObj.version) { $msg += "Version: $($jsonObj.version)`n" }
-                    if ($jsonObj.description) { $msg += "Description: $($jsonObj.description)`n" }
-                    if ($isBundle) {
-                        $msg += "Plugins: $($jsonObj.plugins -join ', ')`n"
-                    } else {
-                        if ($jsonObj.permissions) { $msg += "`nPermissions:`n$(Format-PermissionList $jsonObj.permissions)`n" }
-                        if ($jsonObj.dependencies) {
-                            $deps = ($jsonObj.dependencies | Get-Member -MemberType NoteProperty | ForEach-Object { $_.Name }) -join ', '
-                            if ($deps) { $msg += "Dependencies: $deps`n" }
-                        }
-                    }
-                    $msg += "`nWould you like to open the file in your code editor?"
-                    $result = [System.Windows.Forms.MessageBox]::Show(
-                        $msg, "$AppName - $type Manifest",
-                        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                        [System.Windows.Forms.MessageBoxIcon]::Information)
-                    if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
-                        Start-Process $filePath
-                    }
+                    $json = @{ hook = 'app:file-open'; data = @{ path = $filePath } } | ConvertTo-Json -Compress
+                    $wc = New-Object System.Net.WebClient
+                    $wc.Headers.Add("Content-Type", "application/json")
+                    $wc.UploadString("http://127.0.0.1:53420/hook", $json) | Out-Null
+                    $handed = $true
+                } catch {}
+                if (-not $handed) {
+                    Start-Process $filePath
                 }
             } else {
                 $msg = "URI    : $Uri`nScheme : $($parsed.Scheme)`nHost   : $($parsed.Host)`nPath   : $($parsed.AbsolutePath)`nQuery  : $($parsed.Query)"
@@ -953,7 +906,7 @@ If WScript.Arguments.Count > 0 Then
     Dim scriptDir, sh
     scriptDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
     Set sh = CreateObject("WScript.Shell")
-    sh.Run "wscript.exe """ & scriptDir & "router.vbs"" ""computer://open?path=" & WScript.Arguments(0) & """", 0, False
+    sh.Run "wscript.exe """ & scriptDir & "open.vbs"" """ & WScript.Arguments(0) & """", 0, False
 End If
 '@
 
@@ -977,8 +930,12 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 # Single-instance guard
+# AbandonedMutexException means the previous owner crashed - treat as free.
 $_mutex = New-Object System.Threading.Mutex($false, "Global\$($AppName)_Uninstall_Mutex")
-if (-not $_mutex.WaitOne(0, $false)) {
+$_mutexOwned = $false
+try { $_mutexOwned = $_mutex.WaitOne(0, $false) }
+catch [System.Threading.AbandonedMutexException] { $_mutexOwned = $true }
+if (-not $_mutexOwned) {
     [System.Windows.Forms.MessageBox]::Show(
         "$AppName Uninstaller is already running.", "$AppName Uninstaller",
         [System.Windows.Forms.MessageBoxButtons]::OK,
@@ -989,7 +946,10 @@ if (-not $_mutex.WaitOne(0, $false)) {
 
 # Check if the installer is running
 $_setupMutex = New-Object System.Threading.Mutex($false, "Global\$($AppName)_Setup_Mutex")
-if (-not $_setupMutex.WaitOne(0, $false)) {
+$_setupOwned = $false
+try { $_setupOwned = $_setupMutex.WaitOne(0, $false) }
+catch [System.Threading.AbandonedMutexException] { $_setupOwned = $true }
+if (-not $_setupOwned) {
     [System.Windows.Forms.MessageBox]::Show(
         "$AppName Setup is currently running. Please close it before uninstalling.", "$AppName Uninstaller",
         [System.Windows.Forms.MessageBoxButtons]::OK,
@@ -1075,7 +1035,7 @@ $script:uninstallDone = $false
 $frm                 = New-Object System.Windows.Forms.Form
 $frm.Text            = "Uninstall $AppName"
 $frm.ClientSize      = New-Object System.Drawing.Size(420, 210)
-$frm.StartPosition   = "CenterScreen"
+$frm.StartPosition   = "Manual"
 $frm.FormBorderStyle = "FixedDialog"
 $frm.MaximizeBox     = $false
 $frm.MinimizeBox     = $false
@@ -1087,7 +1047,14 @@ if (Test-Path $_icoPath) {
     $frm.Icon = [System.Drawing.SystemIcons]::Shield
 }
 
-$frm.Add_Load({ [UninstDark]::Enable($frm.Handle) })
+$frm.Add_Load({
+    [UninstDark]::Enable($frm.Handle)
+    $s = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $frm.Location = New-Object System.Drawing.Point(
+        [int]($s.X + ($s.Width  - $frm.Width)  / 2),
+        [int]($s.Y + ($s.Height - $frm.Height) / 2)
+    )
+})
 
 $icoLbl           = New-Object System.Windows.Forms.Label
 $icoLbl.Text      = "!"
@@ -1276,7 +1243,7 @@ const vm = new PluginVM({
 // Heartbeat server on port 53420 - lets the installer/updater detect that
 // the app is running via Test-ComputerRunning (checks TCP listeners on 53420).
 // Also accepts POST /hook to trigger hooks from external entry points
-// (router.ps1, launcher, protocol handler, etc.).
+// (open.ps1, router.ps1, launcher, protocol handler, etc.).
 http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/hook') {
         let body = '';
@@ -1288,13 +1255,24 @@ http.createServer((req, res) => {
                     res.writeHead(400); res.end('{"error":"missing hook"}');
                     return;
                 }
+                console.log(`[app] hook received: ${hook}`);
+
                 const hooks = vm.getService('hooks');
                 if (hooks) {
                     await hooks.doAction(hook, data || {});
                 }
+
+                // Built-in file-open handler: runs even without hooks/plugins
+                if (hook === 'app:file-open' && data && data.path &&
+                    data.path.endsWith('.computer')) {
+                    console.log(`[app] handling file-open: ${data.path}`);
+                    try { await vm.handleFileOpen(data.path); }
+                    catch (e) { console.error(`[app] handleFileOpen error: ${e.message}`); }
+                }
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end('{"ok":true}');
             } catch (e) {
+                console.error(`[app] hook error: ${e.message}`);
                 res.writeHead(400); res.end(JSON.stringify({ error: e.message }));
             }
         });
@@ -1309,9 +1287,11 @@ http.createServer((req, res) => {
   });
 
 vm.loadAll().then(async () => {
-    // Fire the app:launch hook after all plugins are loaded
     const hooks = vm.getService('hooks');
-    if (hooks) await hooks.doAction('app:launch', {});
+    if (hooks) {
+        await hooks.doAction('app:launch', {});
+    }
+    console.log('[app] ready');
 }).catch(err => {
     console.error('[app] fatal:', err.message);
     console.error(err);
@@ -1797,6 +1777,12 @@ const ICONS = {
     SVG('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>'),
   'config.write':
     SVG('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>'),
+  'hooks.action':
+    SVG('<path d="M15.5 3H5a2 2 0 00-2 2v14c0 1.1.9 2 2 2h14a2 2 0 002-2V8.5L15.5 3z"/><polyline points="14 2 14 8 20 8"/>'),
+  'hooks.filter':
+    SVG('<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>'),
+  'hooks.fire':
+    SVG('<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>'),
 };
 
 const DEFAULT_ICON =
@@ -1814,6 +1800,9 @@ const PERM_DETAILS = {
   'vm.manage'    : 'ctx.use("vm")  -  getAll - disable - enable - resetPerms - getDependents',
   'config.read'  : 'config.get(key, default?) - config.all() (unscoped only)',
   'config.write' : 'config.set(key, value)',
+  'hooks.action' : 'hooks.addAction(hook, callback, priority?) - hooks.removeAction(hook, callback)',
+  'hooks.filter' : 'hooks.addFilter(hook, callback, priority?) - hooks.removeFilter(hook, callback)',
+  'hooks.fire'   : 'hooks.doAction(hook, data) - hooks.applyFilters(hook, value, data)',
 };
 
 const WARN_ICON = '<svg class="perm-danger-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
@@ -1958,8 +1947,22 @@ if (data.type === 'bundle') {
   }
 } else {
   // Single plugin - flat list
-  for (const perm of data.permissions) {
-    renderPerm(perm, list, data.permReasons);
+  if (data.permissions.length === 0) {
+    document.getElementById('section-label').textContent = 'Permissions';
+    document.getElementById('btn-allow').disabled = false;
+    document.getElementById('btn-allow').textContent = 'Allow';
+    document.getElementById('scroll-hint').style.opacity = '0';
+    const empty = document.createElement('div');
+    empty.style.cssText = 'padding:18px 16px;text-align:center;color:var(--text-muted);font-size:13px;';
+    empty.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="28" height="28" style="display:block;margin:0 auto 10px;opacity:.45">' +
+      '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' +
+      'No permissions requested by this plugin';
+    list.appendChild(empty);
+  } else {
+    for (const perm of data.permissions) {
+      renderPerm(perm, list, data.permReasons);
+    }
   }
 }
 
@@ -2057,6 +2060,9 @@ const PERM_DESCRIPTIONS = {
     'vm.manage'      : 'Manage plugins (enable, disable, reload)',
     'config.read'    : 'Read configuration values',
     'config.write'   : 'Write configuration values',
+    'hooks.action'   : 'Register action callbacks on hooks',
+    'hooks.filter'   : 'Register filter callbacks on hooks',
+    'hooks.fire'     : 'Fire hooks (doAction / applyFilters)',
 };
 
 // Permissions that get a visual warning in the dialog. Only UNSCOPED variants
@@ -2069,6 +2075,9 @@ const DANGEROUS_PERMS = {
     'config.read'  : { level: 'low',      reason: 'Can read ALL config keys including other plugins\' settings', recommend: 'Scope to your own prefix, e.g. config.read:myplugin.' },
     'config.write' : { level: 'medium',   reason: 'Can modify ALL config keys including other plugins\' settings', recommend: 'Scope to your own prefix, e.g. config.write:myplugin.' },
     'vm.manage'    : { level: 'medium',   reason: 'Can enable, disable, and control all plugins at runtime',     recommend: null },
+    'hooks.action' : { level: 'medium',   reason: 'Can register action callbacks on ALL hooks',                   recommend: 'Scope to specific hooks, e.g. hooks.action:app:launch' },
+    'hooks.filter' : { level: 'medium',   reason: 'Can register filter callbacks on ALL hooks',                   recommend: 'Scope to specific hooks, e.g. hooks.filter:app:file-open:handle' },
+    'hooks.fire'   : { level: 'high',     reason: 'Can fire ANY hook, triggering all registered callbacks',       recommend: 'Scope to your own namespace, e.g. hooks.fire:my-plugin:*' },
 };
 
 // -- Plugin VM -----------------------------------------------------------------
@@ -2096,6 +2105,204 @@ class PluginVM {
     /** Returns a service by name, or undefined if not registered. */
     getService(name) {
         return this._services.get(name);
+    }
+
+    /**
+     * Handle a .computer file being opened from the shell (file association,
+     * right-click, Send To, etc.).  Validates the manifest and shows either
+     * the permission dialog (valid) or an error dialog with "Open in editor"
+     * (invalid).
+     *
+     * The behaviour is overridable via the 'app:file-open' hook - if a plugin
+     * registers an action for that hook, it runs first.  To fully replace the
+     * default behaviour, use a filter on 'app:file-open:handle' that returns
+     * { handled: true }.
+     */
+    async handleFileOpen(filePath) {
+        // Let plugins override via filter
+        const hooks = this.getService('hooks');
+        if (hooks) {
+            const result = await hooks.applyFilters('app:file-open:handle', { handled: false, path: filePath });
+            if (result && result.handled) return;
+        }
+
+        let raw, meta, errors = [];
+        const fileName = path.basename(filePath);
+
+        // Read & parse
+        try { raw = fs.readFileSync(filePath, 'utf8'); }
+        catch (e) { errors.push(`Cannot read file: ${e.message}`); }
+
+        if (raw !== undefined) {
+            if (!raw.trim()) {
+                errors.push('File is empty');
+            } else {
+                try { meta = JSON.parse(raw); }
+                catch (e) { errors.push(`Invalid JSON: ${e.message}`); }
+                if (meta !== undefined && (typeof meta !== 'object' || meta === null || Array.isArray(meta))) {
+                    errors.push('File must contain a JSON object');
+                    meta = undefined;
+                }
+            }
+        }
+
+        // Detect type
+        let isBundle = fileName === 'bundle.computer';
+        let isPlugin = fileName === 'plugin.computer';
+        if (!isBundle && !isPlugin && meta) {
+            if (meta.plugins) isBundle = true;
+            else isPlugin = true;
+        }
+        const type = isBundle ? 'Bundle' : 'Plugin';
+
+        // Validate - collect ALL errors at once
+        if (meta) {
+            const validErrors = isBundle
+                ? this._validateBundleManifest(meta)
+                : this._validatePluginManifest(meta, path.dirname(filePath));
+            errors.push(...validErrors);
+        }
+
+        if (errors.length > 0) {
+            // Show error dialog with "Open in editor" option
+            const errHtml = errors.map(e => `<li>${this._escHtml(e)}</li>`).join('');
+            this._showFileOpenDialog({
+                type: 'error',
+                title: `Invalid ${type} Manifest`,
+                heading: `${type} manifest has ${errors.length} error(s)`,
+                body: `<ul style="text-align:left;margin:12px 0;padding-left:20px;color:#f0838a">${errHtml}</ul>`,
+                filePath,
+                appName: this.appName,
+            });
+        } else {
+            // Valid - show the permission panel
+            const pluginDir = path.dirname(filePath);
+            const pluginDataDir = path.join(this.dataDir, 'plugins', meta.id);
+            const requested = (meta.permissions || []).map(p =>
+                p.replace('${dataDir}', this.dataDir)
+                 .replace('${pluginDataDir}', pluginDataDir)
+            );
+
+            const expandedReasons = {};
+            for (const [k, v] of Object.entries(meta.permissionReasons || {})) {
+                expandedReasons[k
+                    .replace('${dataDir}', this.dataDir)
+                    .replace('${pluginDataDir}', pluginDataDir)] = v;
+            }
+
+            const rows = requested.length;
+            const winH = rows === 0 ? 340 : Math.min(Math.max(226 + rows * 54, 290), 500);
+
+            const dialogData = {
+                type        : isBundle ? 'bundle' : 'plugin',
+                appName     : this.appName,
+                name        : meta.name    || meta.id,
+                version     : meta.version || '',
+                description : meta.description || '',
+                permissions : requested,
+                permDescriptions: PERM_DESCRIPTIONS,
+                permReasons     : expandedReasons,
+                dangerousPerms  : DANGEROUS_PERMS,
+                winW             : 450,
+                winH,
+            };
+
+            if (isBundle) {
+                dialogData.members = meta.plugins || [];
+            }
+
+            const granted = await this._showPermDialog(dialogData, 450, winH);
+            if (granted) {
+                const perms = new Set(requested);
+                this._savePerms(meta.id, perms);
+                try {
+                    const ctx = this._buildCtx(meta.id, perms, pluginDir, meta);
+                    fs.mkdirSync(ctx.dataDir, { recursive: true });
+                    this._runPlugin(pluginDir, meta, ctx);
+                    console.log(`[vm] "${meta.id}" loaded from file open`);
+                } catch (e) {
+                    console.error(`[vm] failed to load "${meta.id}": ${e.message}`);
+                    const msg = e.message.replace(/^\[vm\]\s*/i, '');
+                    this._showFileOpenDialog({
+                        type    : 'error',
+                        title   : `Failed to Load ${type}`,
+                        heading : `"${meta.name || meta.id}" failed to load`,
+                        body    : `<p style="color:#f0838a;margin:12px 0">${this._escHtml(msg)}</p>`,
+                        filePath,
+                        appName : this.appName,
+                    });
+                }
+            }
+        }
+    }
+
+    _escHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    /**
+     * Show a file-open result dialog (error or info) in Edge --app.
+     * For errors, includes an "Open in Editor" button.
+     */
+    _showFileOpenDialog({ type, title, heading, body, filePath, appName }) {
+        const iconPath = path.join(this.dataDir, 'assets', `${appName.toLowerCase()}.ico`);
+        const hasIcon  = fs.existsSync(iconPath);
+        const bgColor  = type === 'error' ? '#1a0a0a' : '#0d1117';
+        const headColor = type === 'error' ? '#f85149' : '#58a6ff';
+
+        const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${this._escHtml(title)}</title>
+<style>
+  body { margin:0; padding:24px; background:${bgColor}; color:#c9d1d9; font-family:'Segoe UI',sans-serif; }
+  h2 { color:${headColor}; font-size:16px; margin:0 0 8px; }
+  .path { color:#8b949e; font-size:12px; word-break:break-all; margin:0 0 12px; }
+  ul { font-size:13px; line-height:1.8; }
+  .btn { display:inline-block; padding:8px 20px; margin:8px 4px 0; border:1px solid #30363d; border-radius:6px;
+         background:#21262d; color:#c9d1d9; font-size:13px; cursor:pointer; text-decoration:none; }
+  .btn:hover { background:#30363d; }
+  .btn-primary { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+  .btn-primary:hover { background:#388bfd; }
+</style></head><body>
+<h2>${this._escHtml(heading)}</h2>
+<p class="path">${this._escHtml(filePath)}</p>
+${body}
+<div style="margin-top:16px;text-align:right">
+  ${type === 'error' ? `<button class="btn btn-primary" onclick="fetch('/open-editor',{method:'POST'}).then(()=>window.close())">Open in Editor</button>` : ''}
+  <button class="btn" onclick="window.close()">Close</button>
+</div>
+<script>new EventSource('/sse');</script>
+</body></html>`;
+
+        const server = http.createServer((req, res) => {
+            if (req.url === '/favicon.ico') {
+                if (hasIcon) {
+                    try { res.writeHead(200, {'Content-Type':'image/x-icon'}); res.end(fs.readFileSync(iconPath)); return; }
+                    catch (_) {}
+                }
+                res.writeHead(204); res.end();
+                return;
+            }
+            if (req.url === '/sse') {
+                res.writeHead(200, {'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
+                res.write('data: connected\n\n');
+                const hb = setInterval(() => { try { res.write(':ping\n\n'); } catch(_) { clearInterval(hb); } }, 25000);
+                req.socket.once('close', () => { clearInterval(hb); setTimeout(() => server.close(), 500); });
+                return;
+            }
+            if (req.method === 'POST' && req.url === '/open-editor') {
+                // Use notepad directly - cmd /c start would re-trigger the file
+                // association (this app) for .computer files, causing a loop.
+                spawn('notepad.exe', [filePath], { detached: true, stdio: 'ignore' }).unref();
+                res.writeHead(200); res.end();
+                return;
+            }
+            if (req.url === '/') { res.writeHead(200, {'Content-Type':'text/html;charset=utf-8'}); res.end(html); return; }
+            res.writeHead(404); res.end();
+        });
+        server.listen(0, '127.0.0.1', () => {
+            const { port } = server.address();
+            this._openBrowser(`http://127.0.0.1:${port}/`, 480, type === 'error' ? 340 : 280);
+        });
     }
 
     // -- Feature flags (read from data/config.json, same file as core's Config) -
@@ -2163,16 +2370,84 @@ class PluginVM {
             // A dedicated profile dir forces Edge to open a fresh window that
             // actually respects --window-size (ignored when a profile is already open).
             const profileDir = path.join(this.dataDir, 'edge-dialog-profile');
-            spawn(edge, [
+
+            // Center on primary monitor (best-effort, falls back to 0,0 area)
+            let posX = 100, posY = 100;
+            try {
+                const out = execFileSync('powershell.exe', [
+                    '-NoProfile', '-Command',
+                    `Add-Type -A System.Windows.Forms;` +
+                    `$s=[System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea;` +
+                    `"$($s.Width),$($s.Height)"`
+                ], { encoding: 'utf8', timeout: 3000 }).trim();
+                const [sw, sh] = out.split(',').map(Number);
+                if (sw && sh) {
+                    posX = Math.round((sw - w) / 2);
+                    posY = Math.round((sh - h) / 2);
+                }
+            } catch (_) {}
+
+            const child = spawn(edge, [
                 `--app=${url}`,
                 `--window-size=${w},${h}`,
+                `--window-position=${posX},${posY}`,
                 `--user-data-dir=${profileDir}`,
                 '--no-first-run',
                 '--disable-extensions',
                 '--disable-default-apps',
                 '--disable-sync',
                 '--no-default-browser-check',
-            ], { detached: true, stdio: 'ignore' }).unref();
+            ], { detached: true, stdio: 'ignore' });
+            child.unref();
+
+            // Bring the Edge window to foreground after it loads.
+            // Uses HWND_TOPMOST trick: briefly makes the window always-on-top then
+            // restores it - this bypasses the foreground lock entirely.
+            // Retries for up to 6 seconds in case Edge is slow to create its window.
+            const pid = child.pid;
+            if (pid) {
+                spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
+                    `Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class FG {
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lp);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    public delegate bool EnumProc(IntPtr h, IntPtr lp);
+    public static IntPtr FindByPid(int pid) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, lp) => {
+            uint wp; GetWindowThreadProcessId(h, out wp);
+            if ((int)wp == pid && IsWindowVisible(h)) { found = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+    public static void Activate(IntPtr hwnd) {
+        ShowWindow(hwnd, 9);
+        SetWindowPos(hwnd, (IntPtr)(-1), 0, 0, 0, 0, 0x0003);
+        SetWindowPos(hwnd, (IntPtr)(-2), 0, 0, 0, 0, 0x0003);
+        SetForegroundWindow(hwnd);
+    }
+}
+"@;` +
+                    `$deadline=(Get-Date).AddSeconds(6);` +
+                    `$h=[IntPtr]::Zero;` +
+                    `while((Get-Date)-lt $deadline){` +
+                    `  $h=[FG]::FindByPid(${pid});` +
+                    `  if($h -ne [IntPtr]::Zero){break};` +
+                    `  foreach($c in (Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}" -EA SilentlyContinue)){` +
+                    `    $h=[FG]::FindByPid($c.ProcessId);if($h -ne [IntPtr]::Zero){break}` +
+                    `  };` +
+                    `  if($h -ne [IntPtr]::Zero){break};` +
+                    `  Start-Sleep -Milliseconds 300` +
+                    `};` +
+                    `if($h -ne [IntPtr]::Zero){[FG]::Activate($h)}`
+                ], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+            }
         } else {
             exec(`cmd /c start "" "${url}"`);
         }
@@ -2214,12 +2489,13 @@ class PluginVM {
             }, 2 * 60 * 1000);
 
             const server = http.createServer((req, res) => {
+                if (settled) { if (!res.headersSent) { res.writeHead(503); res.end(); } return; }
                 // -- Favicon ----------------------------------------------------
                 if (req.url === '/favicon.ico') {
                     try {
                         res.writeHead(200, { 'Content-Type': 'image/x-icon', 'Cache-Control': 'no-cache' });
                         res.end(fs.readFileSync(iconPath));
-                    } catch (_) { res.writeHead(204); res.end(); }
+                    } catch (_) { if (!res.headersSent) { res.writeHead(204); res.end(); } }
                     return;
                 }
 
@@ -2258,6 +2534,7 @@ class PluginVM {
                     let body = '';
                     req.on('data', chunk => { body += chunk; });
                     req.on('end', () => {
+                        if (res.headersSent) return;
                         try {
                             const { granted } = JSON.parse(body);
                             res.writeHead(200); res.end();
@@ -2267,7 +2544,7 @@ class PluginVM {
                     return;
                 }
 
-                res.writeHead(404); res.end();
+                if (!res.headersSent) { res.writeHead(404); res.end(); }
             });
 
             server.listen(0, '127.0.0.1', () => {
@@ -2634,85 +2911,113 @@ class PluginVM {
      * Throws a descriptive Error if plugin.computer is structurally wrong or missing required fields.
      * Call this immediately after JSON.parse so bad manifests are caught before any loading begins.
      */
+    // Returns an array of error strings (empty = valid). Never throws.
     _validatePluginManifest(meta, pluginDir) {
-        if (!meta || typeof meta !== 'object' || Array.isArray(meta))
-            throw new Error('plugin.computer must be a JSON object');
+        const errs = [];
+        if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+            errs.push('plugin.computer must be a JSON object');
+            return errs; // can't continue without an object
+        }
 
         // Required fields
         if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
-            throw new Error('"id" is required and must be a non-empty string');
-        if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
-            throw new Error(`"id" "${meta.id}" is invalid - use lowercase letters, digits, hyphens, or underscores (must start with letter/digit)`);
-        if (!meta.name || typeof meta.name !== 'string' || !meta.name.trim())
-            throw new Error('"name" is required and must be a non-empty string');
+            errs.push('"id" is required and must be a non-empty string');
+        else if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
+            errs.push(`"id" "${meta.id}" is invalid — use lowercase letters, digits, hyphens, or underscores (must start with a letter or digit)`);
 
-        // Optional typed fields
-        if (meta.version !== undefined && typeof meta.version !== 'string')
-            throw new Error('"version" must be a string');
+        if (!meta.name || typeof meta.name !== 'string' || !meta.name.trim())
+            errs.push('"name" is required and must be a non-empty string');
+
+        if (!meta.version || typeof meta.version !== 'string' || !meta.version.trim())
+            errs.push('"version" is required and must be a non-empty string (e.g. "1.0.0")');
+
         if (meta.description !== undefined && typeof meta.description !== 'string')
-            throw new Error('"description" must be a string');
+            errs.push('"description" must be a string');
 
         // main file must exist
         const mainFile = path.join(pluginDir, typeof meta.main === 'string' ? meta.main : 'index.js');
         if (!fs.existsSync(mainFile))
-            throw new Error(`main file "${path.relative(pluginDir, mainFile)}" not found in plugin directory`);
+            errs.push(`main file "${path.relative(pluginDir, mainFile)}" not found in plugin directory`);
 
         // dependencies: object<string, string>
         if (meta.dependencies !== undefined) {
             if (typeof meta.dependencies !== 'object' || Array.isArray(meta.dependencies))
-                throw new Error('"dependencies" must be an object, e.g. { "core": "*" }');
-            for (const [k, v] of Object.entries(meta.dependencies)) {
-                if (typeof v !== 'string')
-                    throw new Error(`"dependencies.${k}" value must be a string (e.g. "*")`);
+                errs.push('"dependencies" must be an object, e.g. { "core": "*" }');
+            else {
+                for (const [k, v] of Object.entries(meta.dependencies)) {
+                    if (typeof v !== 'string')
+                        errs.push(`"dependencies.${k}" value must be a string (e.g. "*")`);
+                }
             }
         }
 
         // permissions: string[]
         if (meta.permissions !== undefined) {
             if (!Array.isArray(meta.permissions))
-                throw new Error('"permissions" must be an array of strings');
-            for (let i = 0; i < meta.permissions.length; i++) {
-                if (typeof meta.permissions[i] !== 'string' || !meta.permissions[i].trim())
-                    throw new Error(`"permissions[${i}]" must be a non-empty string`);
+                errs.push('"permissions" must be an array of strings');
+            else {
+                for (let i = 0; i < meta.permissions.length; i++) {
+                    if (typeof meta.permissions[i] !== 'string' || !meta.permissions[i].trim())
+                        errs.push(`"permissions[${i}]" must be a non-empty string`);
+                }
             }
         }
 
         // uses: object<string, string[]>
         if (meta.uses !== undefined) {
             if (typeof meta.uses !== 'object' || Array.isArray(meta.uses))
-                throw new Error('"uses" must be an object mapping service names to arrays of method names');
-            for (const [k, v] of Object.entries(meta.uses)) {
-                if (!Array.isArray(v))
-                    throw new Error(`"uses.${k}" must be an array of method names`);
+                errs.push('"uses" must be an object mapping service names to arrays of method names');
+            else {
+                for (const [k, v] of Object.entries(meta.uses)) {
+                    if (!Array.isArray(v))
+                        errs.push(`"uses.${k}" must be an array of method names`);
+                }
             }
         }
 
         // permissionReasons: object<string, string>
         if (meta.permissionReasons !== undefined) {
             if (typeof meta.permissionReasons !== 'object' || Array.isArray(meta.permissionReasons))
-                throw new Error('"permissionReasons" must be an object mapping permission strings to reason strings');
-            for (const [k, v] of Object.entries(meta.permissionReasons)) {
-                if (typeof v !== 'string')
-                    throw new Error(`"permissionReasons.${k}" value must be a string`);
+                errs.push('"permissionReasons" must be an object mapping permission strings to reason strings');
+            else {
+                for (const [k, v] of Object.entries(meta.permissionReasons)) {
+                    if (typeof v !== 'string')
+                        errs.push(`"permissionReasons.${k}" value must be a string`);
+                }
             }
         }
+
+        return errs;
     }
 
+    // Returns an array of error strings (empty = valid). Never throws.
     _validateBundleManifest(meta) {
-        if (!meta || typeof meta !== 'object' || Array.isArray(meta))
-            throw new Error('bundle.computer must be a JSON object');
-        if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
-            throw new Error('"id" is required and must be a non-empty string');
-        if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
-            throw new Error(`"id" "${meta.id}" is invalid - use lowercase letters, digits, hyphens, or underscores`);
-        if (!meta.name || typeof meta.name !== 'string' || !meta.name.trim())
-            throw new Error('"name" is required and must be a non-empty string');
-        if (!Array.isArray(meta.plugins) || meta.plugins.length === 0)
-            throw new Error('"plugins" must be a non-empty array of plugin IDs');
-        for (let i = 0; i < meta.plugins.length; i++) {
-            if (!meta.plugins[i] || typeof meta.plugins[i] !== 'string' || !meta.plugins[i].trim())
-                throw new Error(`"plugins[${i}]" must be a non-empty string plugin ID`);
+        const errs = [];
+        if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+            errs.push('bundle.computer must be a JSON object');
+            return errs;
         }
+        if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
+            errs.push('"id" is required and must be a non-empty string');
+        else if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
+            errs.push(`"id" "${meta.id}" is invalid — use lowercase letters, digits, hyphens, or underscores`);
+
+        if (!meta.name || typeof meta.name !== 'string' || !meta.name.trim())
+            errs.push('"name" is required and must be a non-empty string');
+
+        if (!meta.version || typeof meta.version !== 'string' || !meta.version.trim())
+            errs.push('"version" is required and must be a non-empty string (e.g. "1.0.0")');
+
+        if (!Array.isArray(meta.plugins) || meta.plugins.length === 0)
+            errs.push('"plugins" must be a non-empty array of plugin IDs');
+        else {
+            for (let i = 0; i < meta.plugins.length; i++) {
+                if (!meta.plugins[i] || typeof meta.plugins[i] !== 'string' || !meta.plugins[i].trim())
+                    errs.push(`"plugins[${i}]" must be a non-empty string plugin ID`);
+            }
+        }
+
+        return errs;
     }
 
     // -- Sandbox context builder -----------------------------------------------
@@ -2927,6 +3232,77 @@ class PluginVM {
                     };
                 }
 
+                // -- Hooks service: gated by hooks.action / hooks.filter / hooks.fire ----
+                if (name === 'hooks') {
+                    if (!has('hooks.action') && !has('hooks.filter') && !has('hooks.fire')) {
+                        throw new Error(
+                            `Permission denied: plugin "${pluginId}" needs hooks.action, hooks.filter, ` +
+                            `or hooks.fire in permissions to access the hooks service`
+                        );
+                    }
+                    // Wildcard-aware matcher: checks if any granted perm covers the hook name.
+                    // e.g. "hooks.action:app:*" matches "app:launch", "app:file-open"
+                    //      "hooks.action:my-plugin:data" matches only "my-plugin:data"
+                    //      "hooks.action" (unscoped) matches everything
+                    const hookAllowed = (base, hookName) => {
+                        if (grantedPerms.has(base)) return true; // unscoped = all hooks
+                        for (const p of grantedPerms) {
+                            if (!p.startsWith(base + ':')) continue;
+                            const pattern = p.slice(base.length + 1);
+                            if (pattern === hookName) return true;
+                            // Wildcard: "app:*" matches "app:launch", "app:file-open", etc.
+                            if (pattern.endsWith(':*')) {
+                                const prefix = pattern.slice(0, -1); // "app:"
+                                if (hookName.startsWith(prefix)) return true;
+                            }
+                            // Single wildcard: "*" matches everything
+                            if (pattern === '*') return true;
+                        }
+                        return false;
+                    };
+                    return {
+                        addAction(hook, callback, priority) {
+                            if (!hookAllowed('hooks.action', hook)) {
+                                throw new Error(`Permission denied: hooks.action for "${hook}" not granted`);
+                            }
+                            return service.addAction(hook, callback, priority, pluginId);
+                        },
+                        removeAction(hook, callback) {
+                            if (!hookAllowed('hooks.action', hook)) {
+                                throw new Error(`Permission denied: hooks.action for "${hook}" not granted`);
+                            }
+                            return service.removeAction(hook, callback);
+                        },
+                        addFilter(hook, callback, priority) {
+                            if (!hookAllowed('hooks.filter', hook)) {
+                                throw new Error(`Permission denied: hooks.filter for "${hook}" not granted`);
+                            }
+                            return service.addFilter(hook, callback, priority, pluginId);
+                        },
+                        removeFilter(hook, callback) {
+                            if (!hookAllowed('hooks.filter', hook)) {
+                                throw new Error(`Permission denied: hooks.filter for "${hook}" not granted`);
+                            }
+                            return service.removeFilter(hook, callback);
+                        },
+                        async doAction(hook, data) {
+                            if (!hookAllowed('hooks.fire', hook)) {
+                                throw new Error(`Permission denied: hooks.fire for "${hook}" not granted`);
+                            }
+                            return service.doAction(hook, data);
+                        },
+                        async applyFilters(hook, value, data) {
+                            if (!hookAllowed('hooks.fire', hook)) {
+                                throw new Error(`Permission denied: hooks.fire for "${hook}" not granted`);
+                            }
+                            return service.applyFilters(hook, value, data);
+                        },
+                        getRegistrations() {
+                            return service.getRegistrations();
+                        },
+                    };
+                }
+
                 // Function filtering: "uses": { "hello": ["greet"] } in plugin.computer
                 const allowed = (meta.uses || {})[name];
                 if (Array.isArray(allowed) && allowed.length > 0 &&
@@ -2962,12 +3338,21 @@ class PluginVM {
         ]);
 
         const moduleObj = { exports: {} };
+        const tag = `[${meta.id}]`;
+        const pluginConsole = {
+            log  : (...a) => console.log(tag, ...a),
+            info : (...a) => console.info(tag, ...a),
+            warn : (...a) => console.warn(tag, ...a),
+            error: (...a) => console.error(tag, ...a),
+            debug: (...a) => console.debug(tag, ...a),
+            trace: (...a) => console.trace(tag, ...a),
+        };
         const sandbox = vm.createContext({
             module     : moduleObj,
             exports    : moduleObj.exports,
             __dirname  : pluginDir,
             __filename : mainFile,
-            console,
+            console    : pluginConsole,
             Buffer,
             setTimeout, clearTimeout, setInterval, clearInterval,
             Promise,
@@ -3059,7 +3444,8 @@ class PluginVM {
             if (fs.existsSync(bundleFile)) {
                 try {
                     const meta = JSON.parse(fs.readFileSync(bundleFile, 'utf8'));
-                    this._validateBundleManifest(meta);
+                    const errs = this._validateBundleManifest(meta);
+                    if (errs.length) throw new Error(errs.join('; '));
                     meta._dir    = dir;
                     meta._folder = folder;
                     bundleManifests[meta.id] = meta;
@@ -3070,7 +3456,8 @@ class PluginVM {
             } else if (fs.existsSync(pluginFile)) {
                 try {
                     const meta = JSON.parse(fs.readFileSync(pluginFile, 'utf8'));
-                    this._validatePluginManifest(meta, dir);
+                    const errs = this._validatePluginManifest(meta, dir);
+                    if (errs.length) throw new Error(errs.join('; '));
                     meta._dir    = dir;
                     meta._folder = folder;
                     pluginManifests[meta.id] = meta;
@@ -3363,6 +3750,8 @@ $FILE_MANIFEST = [ordered]@{
     'data/__APP_NAME__.cmd' = $FILE_DATA___APP_NAME___CMD
     'data/lib/check-update.ps1' = $FILE_DATA_LIB_CHECK_UPDATE_PS1
     'data/lib/check-update.vbs' = $FILE_DATA_LIB_CHECK_UPDATE_VBS
+    'data/lib/open.ps1' = $FILE_DATA_LIB_OPEN_PS1
+    'data/lib/open.vbs' = $FILE_DATA_LIB_OPEN_VBS
     'data/lib/repair.vbs' = $FILE_DATA_LIB_REPAIR_VBS
     'data/lib/router.ps1' = $FILE_DATA_LIB_ROUTER_PS1
     'data/lib/router.vbs' = $FILE_DATA_LIB_ROUTER_VBS
@@ -3409,13 +3798,19 @@ class EventBus extends EventEmitter {}
 //
 class Hooks {
     constructor() {
-        this._actions = {};   // hookName -> [{callback, priority}]
-        this._filters = {};   // hookName -> [{callback, priority}]
+        this._actions = {};   // hookName -> [{callback, priority, pluginId}]
+        this._filters = {};   // hookName -> [{callback, priority, pluginId}]
     }
 
-    addAction(hook, callback, priority = 10) {
+    addAction(hook, callback, priority = 10, pluginId = null) {
         if (!this._actions[hook]) this._actions[hook] = [];
-        this._actions[hook].push({ callback, priority });
+        // Log when multiple plugins register on the same hook
+        const existing = this._actions[hook].filter(h => h.pluginId && h.pluginId !== pluginId);
+        if (pluginId && existing.length > 0) {
+            const others = [...new Set(existing.map(h => h.pluginId))].join(', ');
+            console.log(`[hooks] action "${hook}": "${pluginId}" joining [${others}]`);
+        }
+        this._actions[hook].push({ callback, priority, pluginId });
         this._actions[hook].sort((a, b) => a.priority - b.priority);
     }
 
@@ -3431,9 +3826,16 @@ class Hooks {
         }
     }
 
-    addFilter(hook, callback, priority = 10) {
+    addFilter(hook, callback, priority = 10, pluginId = null) {
         if (!this._filters[hook]) this._filters[hook] = [];
-        this._filters[hook].push({ callback, priority });
+        // Filters are chained, so multiple is expected - but warn when a
+        // second plugin registers on an overridable built-in filter
+        const existing = this._filters[hook].filter(h => h.pluginId && h.pluginId !== pluginId);
+        if (pluginId && existing.length > 0) {
+            const others = [...new Set(existing.map(h => h.pluginId))].join(', ');
+            console.warn(`[hooks] filter "${hook}": "${pluginId}" added after [${others}] - filters chain in priority order, last writer wins`);
+        }
+        this._filters[hook].push({ callback, priority, pluginId });
         this._filters[hook].sort((a, b) => a.priority - b.priority);
     }
 
@@ -3448,6 +3850,27 @@ class Hooks {
             value = await callback(value, data);
         }
         return value;
+    }
+
+    /**
+     * Inspect all registered hooks. Returns an object mapping hook names to
+     * arrays of { type, pluginId, priority } for the manager UI.
+     */
+    getRegistrations() {
+        const result = {};
+        for (const [hook, entries] of Object.entries(this._actions)) {
+            if (!result[hook]) result[hook] = [];
+            for (const e of entries) {
+                result[hook].push({ type: 'action', pluginId: e.pluginId, priority: e.priority });
+            }
+        }
+        for (const [hook, entries] of Object.entries(this._filters)) {
+            if (!result[hook]) result[hook] = [];
+            for (const e of entries) {
+                result[hook].push({ type: 'filter', pluginId: e.pluginId, priority: e.priority });
+            }
+        }
+        return result;
     }
 }
 
@@ -4873,7 +5296,8 @@ const path = require('path');
 
 module.exports = {
     install(ctx) {
-        const log = ctx.use('log');
+        const log   = ctx.use('log');
+        const hooks = ctx.use('hooks');
 
         log(`example: data dir -> ${ctx.dataDir}`);
 
@@ -4885,6 +5309,15 @@ module.exports = {
         // Read it back and log it
         const content = ctx.readFile(greetFile);
         log(`example: ${content.trim()}`);
+
+        // Hook into app events
+        hooks.addAction('app:launch', async () => {
+            log('example: app launched!');
+        });
+
+        hooks.addAction('app:file-open', async ({ path: filePath }) => {
+            log(`example: file opened -> ${filePath}`);
+        });
 
         log('example plugin loaded');
     }
@@ -5561,14 +5994,16 @@ $FILE_PLUGINS_EXAMPLE_PLUGIN_COMPUTER = @'
   "id": "example",
   "name": "Example",
   "version": "1.0.0",
-  "description": "Minimal example plugin - reads a file and logs it via the core logger",
+  "description": "Minimal example plugin - reads a file, logs it, and hooks into app events",
   "main": "index.js",
   "dependencies": {
     "core": "*"
   },
   "permissions": [
     "fs.read:${dataDir}",
-    "fs.write:${dataDir}"
+    "fs.write:${dataDir}",
+    "hooks.action:app:launch",
+    "hooks.action:app:file-open"
   ]
 }
 '@
@@ -10440,12 +10875,19 @@ function Show-Dialog {
     $d = New-Object System.Windows.Forms.Form
     $d.Text            = $Title
     $d.ClientSize      = New-Object System.Drawing.Size(420, 100)
-    $d.StartPosition   = "CenterScreen"
+    $d.StartPosition   = "Manual"
     $d.FormBorderStyle = "FixedDialog"
     $d.MaximizeBox     = $false
     $d.MinimizeBox     = $false
     $d.BackColor       = $C_CARD
-    $d.Add_Load({ [DarkMode]::Enable($d.Handle) }.GetNewClosure())
+    $d.Add_Load({
+        [DarkMode]::Enable($d.Handle)
+        $s = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+        $d.Location = New-Object System.Drawing.Point(
+            [int]($s.X + ($s.Width  - $d.Width)  / 2),
+            [int]($s.Y + ($s.Height - $d.Height) / 2)
+        )
+    }.GetNewClosure())
 
     $lbl           = New-Object System.Windows.Forms.Label
     $lbl.Text      = $Message
@@ -10555,7 +10997,7 @@ function New-ActionButton {
 $form                 = New-Object System.Windows.Forms.Form
 $form.Text            = "$APP_NAME $APP_VERSION Setup"
 $form.ClientSize      = New-Object System.Drawing.Size(540, 475)
-$form.StartPosition   = "CenterScreen"
+$form.StartPosition   = "Manual"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox     = $false
 $form.MinimizeBox     = $false
@@ -10573,6 +11015,11 @@ $form.Add_Load({
     }
 
     [DarkMode]::Enable($form.Handle)
+    $s = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $form.Location = New-Object System.Drawing.Point(
+        [int]($s.X + ($s.Width  - $form.Width)  / 2),
+        [int]($s.Y + ($s.Height - $form.Height) / 2)
+    )
 })
 
 $form.Add_FormClosing({
@@ -12137,7 +12584,7 @@ public class ShellNotify {
                }
            }},
 
-        @{ Pct = 87; Msg = "Registering $($APP_PROTO):// protocol...";
+        @{ Pct = 82; Msg = "Registering $($APP_PROTO):// protocol...";
            Action = {
                # URI scheme registration (e.g. computer://) lets links in browsers
                # and scripts open COMPUTER directly.  Written to HKCU\SOFTWARE\Classes
@@ -12159,7 +12606,7 @@ public class ShellNotify {
                }
            }},
 
-        @{ Pct = 94; Msg = "Registering uninstaller...";
+        @{ Pct = 86; Msg = "Registering uninstaller...";
            Action = {
                # Adds COMPUTER to Add/Remove Programs (HKCU uninstall key).
                # Uses HKCU so no admin rights are needed.  The UninstallString
@@ -12179,12 +12626,14 @@ public class ShellNotify {
                }
                if (Test-Path "$assets\$APP_NAME_LOW.ico") {
                    New-ItemProperty -Path $key -Name "DisplayIcon" -Value "$assets\$APP_NAME_LOW.ico" -PropertyType String -Force | Out-Null
+               } else {
+                   New-ItemProperty -Path $key -Name "DisplayIcon" -Value "$env:SystemRoot\system32\shell32.dll,1" -PropertyType String -Force | Out-Null
                }
                New-ItemProperty -Path $key -Name "NoModify" -Value 1 -PropertyType DWord -Force | Out-Null
                New-ItemProperty -Path $key -Name "NoRepair" -Value 1 -PropertyType DWord -Force | Out-Null
            }},
 
-        @{ Pct = 88; Msg = "Applying optional features (1/7): Run on startup...";
+        @{ Pct = 88; Msg = "Applying optional features (1/7): Run on startup...";  # 88-95 reserved for optional features
            Action = {
                # Startup shortcut - only created when $chkStartup.Checked is true
                # (user explicitly opted in on the Confirm page).  Uses the standard
@@ -12228,8 +12677,8 @@ public class ShellNotify {
         @{ Pct = 91; Msg = "Applying optional features (3/7): Right-click menu...";
            Action = {
                $ico    = "$assets\$APP_NAME_LOW.ico"
-               $cmd    = "wscript.exe `"$lib\router.vbs`" `"$($APP_PROTO)://open?path=%1`""
-               $cmdDir = "wscript.exe `"$lib\router.vbs`" `"$($APP_PROTO)://open?path=%V`""
+               $cmd    = "wscript.exe `"$lib\open.vbs`" `"%1`""
+               $cmdDir = "wscript.exe `"$lib\open.vbs`" `"%V`""
                if ($chkOpenWith.Checked) {
                    Write-Log "Right-click menu: registering"
                    $hkcu = [Microsoft.Win32.Registry]::CurrentUser
@@ -12298,7 +12747,7 @@ public class ShellNotify {
                    $k = $hkcu.CreateSubKey("SOFTWARE\Classes\$APP_NAME.File\DefaultIcon")
                    $k.SetValue("", "$assets\$APP_NAME_LOW.ico,0"); $k.Close()
                    $k = $hkcu.CreateSubKey("SOFTWARE\Classes\$APP_NAME.File\shell\open\command")
-                   $k.SetValue("", "wscript.exe `"$lib\router.vbs`" `"$($APP_PROTO)://open?path=%1`""); $k.Close()
+                   $k.SetValue("", "wscript.exe `"$lib\open.vbs`" `"%1`""); $k.Close()
                } else {
                    Write-Log "File assoc: removing .$APP_NAME_LOW"
                    Remove-Item -Path "HKCU:\SOFTWARE\Classes\.$APP_NAME_LOW" -Recurse -Force -ErrorAction SilentlyContinue
