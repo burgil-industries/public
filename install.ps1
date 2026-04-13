@@ -642,6 +642,17 @@ $AppName = '__APP_NAME__'
 
 Add-Type -AssemblyName System.Windows.Forms
 
+# Fire a hook on the running app via the heartbeat server (port 53420).
+# Non-blocking, best-effort - silently ignored if the app is not running.
+function Fire-Hook([string]$HookName, [hashtable]$Data = @{}) {
+    try {
+        $json = @{ hook = $HookName; data = $Data } | ConvertTo-Json -Compress
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add("Content-Type", "application/json")
+        $wc.UploadString("http://127.0.0.1:53420/hook", $json) | Out-Null
+    } catch {}
+}
+
 # Permission descriptions for human-readable display
 $PermDescriptions = @{
     'fs.read'        = 'Read files from your computer'
@@ -690,6 +701,9 @@ try {
         }
     }
 
+    # Fire protocol hook for every incoming URI
+    Fire-Hook 'app:protocol' @{ uri = $Uri; host = $host_; path = $path_; query = $query }
+
     switch ($host_) {
 
         'install' {
@@ -727,6 +741,7 @@ try {
                 [System.Windows.Forms.MessageBoxIcon]::Question)
 
             if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
+                Fire-Hook 'app:before-install' @{ pluginId = $pluginId; version = $version }
                 # Placeholder: actual plugin installation logic goes here
                 [System.Windows.Forms.MessageBox]::Show(
                     "Plugin '$pluginId' installed successfully.",
@@ -777,13 +792,135 @@ try {
         }
 
         'open' {
-            $path = $query['path']
-            $msg = "URI    : $Uri`nScheme : $($parsed.Scheme)`nHost   : $($parsed.Host)`nPath   : $($parsed.AbsolutePath)`nQuery  : $($parsed.Query)"
-            if ($path) { $msg += "`nFile   : $path" }
-            [System.Windows.Forms.MessageBox]::Show(
-                $msg, "$AppName Protocol Handler",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+            $filePath = $query['path']
+            if ($filePath -and $filePath -match '\.computer$' -and (Test-Path $filePath)) {
+                # Fire file-open hook
+                Fire-Hook 'app:file-open' @{ path = $filePath }
+
+                # Validate .computer file
+                $fileName = [System.IO.Path]::GetFileName($filePath)
+                $rawContent = $null
+                $jsonObj = $null
+                $errors = @()
+
+                try {
+                    $rawContent = Get-Content $filePath -Raw -ErrorAction Stop
+                } catch {
+                    $errors += "Cannot read file: $_"
+                }
+
+                if ($rawContent -ne $null) {
+                    try {
+                        $jsonObj = $rawContent | ConvertFrom-Json -ErrorAction Stop
+                    } catch {
+                        $errors += "Invalid JSON: $_"
+                    }
+                }
+
+                if ($jsonObj -ne $null) {
+                    $isBundle = $fileName -eq 'bundle.computer'
+                    $isPlugin = $fileName -eq 'plugin.computer'
+
+                    if (-not $isBundle -and -not $isPlugin) {
+                        # Detect type from content
+                        if ($jsonObj.plugins) { $isBundle = $true }
+                        elseif ($jsonObj.main -or $jsonObj.dependencies) { $isPlugin = $true }
+                        else { $isPlugin = $true }  # default
+                    }
+
+                    if ($isBundle) {
+                        if (-not $jsonObj.id -or $jsonObj.id -isnot [string] -or -not $jsonObj.id.Trim()) {
+                            $errors += '"id" is required and must be a non-empty string'
+                        } elseif ($jsonObj.id -notmatch '^[a-z0-9][a-z0-9\-_]*$') {
+                            $errors += "`"id`" `"$($jsonObj.id)`" is invalid - use lowercase letters, digits, hyphens, or underscores"
+                        }
+                        if (-not $jsonObj.name -or $jsonObj.name -isnot [string] -or -not $jsonObj.name.Trim()) {
+                            $errors += '"name" is required and must be a non-empty string'
+                        }
+                        if (-not $jsonObj.plugins -or $jsonObj.plugins.Count -eq 0) {
+                            $errors += '"plugins" must be a non-empty array of plugin IDs'
+                        } elseif ($jsonObj.plugins) {
+                            for ($i = 0; $i -lt $jsonObj.plugins.Count; $i++) {
+                                $p = $jsonObj.plugins[$i]
+                                if (-not $p -or $p -isnot [string] -or -not $p.Trim()) {
+                                    $errors += "`"plugins[$i]`" must be a non-empty string plugin ID"
+                                }
+                            }
+                        }
+                    } else {
+                        # Plugin validation
+                        if (-not $jsonObj.id -or $jsonObj.id -isnot [string] -or -not $jsonObj.id.Trim()) {
+                            $errors += '"id" is required and must be a non-empty string'
+                        } elseif ($jsonObj.id -notmatch '^[a-z0-9][a-z0-9\-_]*$') {
+                            $errors += "`"id`" `"$($jsonObj.id)`" is invalid - use lowercase letters, digits, hyphens, or underscores"
+                        }
+                        if (-not $jsonObj.name -or $jsonObj.name -isnot [string] -or -not $jsonObj.name.Trim()) {
+                            $errors += '"name" is required and must be a non-empty string'
+                        }
+                        if ($jsonObj.version -ne $null -and $jsonObj.version -isnot [string]) {
+                            $errors += '"version" must be a string'
+                        }
+                        if ($jsonObj.dependencies -ne $null -and $jsonObj.dependencies -is [array]) {
+                            $errors += '"dependencies" must be an object, e.g. { "core": "*" }'
+                        }
+                        if ($jsonObj.permissions -ne $null -and $jsonObj.permissions -isnot [array]) {
+                            $errors += '"permissions" must be an array of strings'
+                        }
+                        # Check main file exists
+                        $dir = [System.IO.Path]::GetDirectoryName($filePath)
+                        $mainFile = if ($jsonObj.main) { $jsonObj.main } else { "index.js" }
+                        $mainPath = Join-Path $dir $mainFile
+                        if (-not (Test-Path $mainPath)) {
+                            $errors += "Main file `"$mainFile`" not found in plugin directory"
+                        }
+                    }
+                }
+
+                $type = if ($isBundle) { "Bundle" } else { "Plugin" }
+
+                if ($errors.Count -gt 0) {
+                    $msg = "$type manifest has $($errors.Count) error(s):`n`n"
+                    foreach ($e in $errors) { $msg += "  - $e`n" }
+                    $msg += "`nWould you like to open the file in your code editor to fix it?"
+                    $result = [System.Windows.Forms.MessageBox]::Show(
+                        $msg, "$AppName - Invalid $type",
+                        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                        [System.Windows.Forms.MessageBoxIcon]::Warning)
+                    if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
+                        Start-Process $filePath
+                    }
+                } else {
+                    $msg = "$type manifest is valid.`n`n"
+                    $msg += "ID: $($jsonObj.id)`n"
+                    $msg += "Name: $($jsonObj.name)`n"
+                    if ($jsonObj.version) { $msg += "Version: $($jsonObj.version)`n" }
+                    if ($jsonObj.description) { $msg += "Description: $($jsonObj.description)`n" }
+                    if ($isBundle) {
+                        $msg += "Plugins: $($jsonObj.plugins -join ', ')`n"
+                    } else {
+                        if ($jsonObj.permissions) { $msg += "`nPermissions:`n$(Format-PermissionList $jsonObj.permissions)`n" }
+                        if ($jsonObj.dependencies) {
+                            $deps = ($jsonObj.dependencies | Get-Member -MemberType NoteProperty | ForEach-Object { $_.Name }) -join ', '
+                            if ($deps) { $msg += "Dependencies: $deps`n" }
+                        }
+                    }
+                    $msg += "`nWould you like to open the file in your code editor?"
+                    $result = [System.Windows.Forms.MessageBox]::Show(
+                        $msg, "$AppName - $type Manifest",
+                        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                        [System.Windows.Forms.MessageBoxIcon]::Information)
+                    if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
+                        Start-Process $filePath
+                    }
+                }
+            } else {
+                $msg = "URI    : $Uri`nScheme : $($parsed.Scheme)`nHost   : $($parsed.Host)`nPath   : $($parsed.AbsolutePath)`nQuery  : $($parsed.Query)"
+                if ($filePath) { $msg += "`nFile   : $filePath" }
+                [System.Windows.Forms.MessageBox]::Show(
+                    $msg, "$AppName Protocol Handler",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+            }
         }
 
         default {
@@ -1138,19 +1275,57 @@ const vm = new PluginVM({
 
 // Heartbeat server on port 53420 - lets the installer/updater detect that
 // the app is running via Test-ComputerRunning (checks TCP listeners on 53420).
-http.createServer((_req, res) => { res.writeHead(200); res.end('ok'); })
-    .listen(53420, '127.0.0.1', () => console.log('[app] heartbeat on 127.0.0.1:53420'))
-    .on('error', err => {
-        if (err.code === 'EADDRINUSE') {
-            console.warn('[app] port 53420 already in use - another instance may be running');
-        }
-    });
+// Also accepts POST /hook to trigger hooks from external entry points
+// (router.ps1, launcher, protocol handler, etc.).
+http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/hook') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', async () => {
+            try {
+                const { hook, data } = JSON.parse(body);
+                if (!hook || typeof hook !== 'string') {
+                    res.writeHead(400); res.end('{"error":"missing hook"}');
+                    return;
+                }
+                const hooks = vm.getService('hooks');
+                if (hooks) {
+                    await hooks.doAction(hook, data || {});
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end('{"ok":true}');
+            } catch (e) {
+                res.writeHead(400); res.end(JSON.stringify({ error: e.message }));
+            }
+        });
+        return;
+    }
+    res.writeHead(200); res.end('ok');
+}).listen(53420, '127.0.0.1', () => console.log('[app] heartbeat on 127.0.0.1:53420'))
+  .on('error', err => {
+      if (err.code === 'EADDRINUSE') {
+          console.warn('[app] port 53420 already in use - another instance may be running');
+      }
+  });
 
-vm.loadAll().catch(err => {
+vm.loadAll().then(async () => {
+    // Fire the app:launch hook after all plugins are loaded
+    const hooks = vm.getService('hooks');
+    if (hooks) await hooks.doAction('app:launch', {});
+}).catch(err => {
     console.error('[app] fatal:', err.message);
     console.error(err);
     process.exit(1);
 });
+
+// Fire app:shutdown on clean exit
+for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, async () => {
+        const hooks = vm.getService('hooks');
+        if (hooks) await hooks.doAction('app:shutdown', {});
+        process.exit(0);
+    });
+}
 '@
 
 $FILE_DATA_SRC_APP_PY = @'
@@ -1914,8 +2089,13 @@ class PluginVM {
         this._services         = new Map();   // name -> value (provided by plugins)
         this._serviceProviders = new Map();   // service name -> pluginId that provided it
         this._loaded      = [];          // plugin/bundle IDs loaded in this session
-        this._pluginMetas = new Map();   // pluginId -> plugin.json contents
+        this._pluginMetas = new Map();   // pluginId -> plugin.computer contents
         this._syncing     = false;       // mutex: prevents concurrent _syncPlugins calls
+    }
+
+    /** Returns a service by name, or undefined if not registered. */
+    getService(name) {
+        return this._services.get(name);
     }
 
     // -- Feature flags (read from data/config.json, same file as core's Config) -
@@ -2327,8 +2507,8 @@ class PluginVM {
 
         for (const folder of folders) {
             const dir        = path.join(this.pluginsDir, folder);
-            const bundleFile = path.join(dir, 'bundle.json');
-            const pluginFile = path.join(dir, 'plugin.json');
+            const bundleFile = path.join(dir, 'bundle.computer');
+            const pluginFile = path.join(dir, 'plugin.computer');
 
             if (fs.existsSync(bundleFile)) {
                 try {
@@ -2350,7 +2530,7 @@ class PluginVM {
                         id: folder, name: folder, version: '', description: '',
                         type: 'bundle', members: [], dependencies: [], permissions: [], dependents: [],
                         status: 'error', loaded: false,
-                        error: entry.error || `bundle.json parse error: ${e.message}`,
+                        error: entry.error || `bundle.computer parse error: ${e.message}`,
                     });
                 }
             } else if (fs.existsSync(pluginFile)) {
@@ -2374,7 +2554,7 @@ class PluginVM {
                         id: folder, name: folder, version: '', description: '',
                         type: 'plugin', dependencies: [], permissions: [], dependents: [],
                         status: 'error', loaded: false,
-                        error: entry.error || `plugin.json parse error: ${e.message}`,
+                        error: entry.error || `plugin.computer parse error: ${e.message}`,
                     });
                 }
             }
@@ -2451,12 +2631,12 @@ class PluginVM {
     // -- Manifest validation ---------------------------------------------------
 
     /**
-     * Throws a descriptive Error if plugin.json is structurally wrong or missing required fields.
+     * Throws a descriptive Error if plugin.computer is structurally wrong or missing required fields.
      * Call this immediately after JSON.parse so bad manifests are caught before any loading begins.
      */
     _validatePluginManifest(meta, pluginDir) {
         if (!meta || typeof meta !== 'object' || Array.isArray(meta))
-            throw new Error('plugin.json must be a JSON object');
+            throw new Error('plugin.computer must be a JSON object');
 
         // Required fields
         if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
@@ -2520,7 +2700,7 @@ class PluginVM {
 
     _validateBundleManifest(meta) {
         if (!meta || typeof meta !== 'object' || Array.isArray(meta))
-            throw new Error('bundle.json must be a JSON object');
+            throw new Error('bundle.computer must be a JSON object');
         if (!meta.id || typeof meta.id !== 'string' || !meta.id.trim())
             throw new Error('"id" is required and must be a non-empty string');
         if (!/^[a-z0-9][a-z0-9\-_]*$/.test(meta.id))
@@ -2688,7 +2868,7 @@ class PluginVM {
                 // The built-in 'vm' service is gated by the vm.manage permission
                 if (name === 'vm') {
                     if (!has('vm.manage')) {
-                        throw new Error('Permission denied: vm.manage not granted - declare it in plugin.json to access VM control');
+                        throw new Error('Permission denied: vm.manage not granted - declare it in plugin.computer to access VM control');
                     }
                 } else {
                     // Access gate: caller must declare the providing plugin as a dependency
@@ -2698,7 +2878,7 @@ class PluginVM {
                         if (!deps.includes(providerId)) {
                             throw new Error(
                                 `Plugin "${pluginId}" used service "${name}" (from "${providerId}") ` +
-                                `without declaring "${providerId}" as a dependency in plugin.json`
+                                `without declaring "${providerId}" as a dependency in plugin.computer`
                             );
                         }
                     }
@@ -2747,7 +2927,7 @@ class PluginVM {
                     };
                 }
 
-                // Function filtering: "uses": { "hello": ["greet"] } in plugin.json
+                // Function filtering: "uses": { "hello": ["greet"] } in plugin.computer
                 const allowed = (meta.uses || {})[name];
                 if (Array.isArray(allowed) && allowed.length > 0 &&
                     typeof service === 'object' && service !== null) {
@@ -2812,7 +2992,7 @@ class PluginVM {
     // -- loadPlugin (single plugin, no cache management) ----------------------
 
     async loadPlugin(pluginDir) {
-        const metaPath = path.join(pluginDir, 'plugin.json');
+        const metaPath = path.join(pluginDir, 'plugin.computer');
         const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
 
         const pluginDataDir = path.join(this.dataDir, 'plugins', meta.id);
@@ -2873,8 +3053,8 @@ class PluginVM {
 
         for (const folder of presentFolders) {
             const dir        = path.join(this.pluginsDir, folder);
-            const bundleFile = path.join(dir, 'bundle.json');
-            const pluginFile = path.join(dir, 'plugin.json');
+            const bundleFile = path.join(dir, 'bundle.computer');
+            const pluginFile = path.join(dir, 'plugin.computer');
 
             if (fs.existsSync(bundleFile)) {
                 try {
@@ -3216,6 +3396,61 @@ const FEATURE_DEFAULTS = {
 // -- EventBus ------------------------------------------------------------------
 class EventBus extends EventEmitter {}
 
+// -- Hooks (WordPress-style actions & filters) ---------------------------------
+// Actions: fire-and-forget callbacks for side effects (e.g. log, notify).
+// Filters: callbacks that transform a value through a chain (e.g. modify path).
+//
+// Built-in hook names:
+//   'app:launch'              - fired when the app starts, after all plugins load
+//   'app:file-open'           - fired when a .computer file is opened ({path, meta})
+//   'app:protocol'            - fired on computer:// URI ({uri, host, path, query})
+//   'app:before-install'      - fired before a plugin install ({pluginId, version})
+//   'app:shutdown'            - fired before the app exits
+//
+class Hooks {
+    constructor() {
+        this._actions = {};   // hookName -> [{callback, priority}]
+        this._filters = {};   // hookName -> [{callback, priority}]
+    }
+
+    addAction(hook, callback, priority = 10) {
+        if (!this._actions[hook]) this._actions[hook] = [];
+        this._actions[hook].push({ callback, priority });
+        this._actions[hook].sort((a, b) => a.priority - b.priority);
+    }
+
+    removeAction(hook, callback) {
+        if (!this._actions[hook]) return;
+        this._actions[hook] = this._actions[hook].filter(h => h.callback !== callback);
+    }
+
+    async doAction(hook, data = {}) {
+        if (!this._actions[hook]) return;
+        for (const { callback } of this._actions[hook]) {
+            await callback(data);
+        }
+    }
+
+    addFilter(hook, callback, priority = 10) {
+        if (!this._filters[hook]) this._filters[hook] = [];
+        this._filters[hook].push({ callback, priority });
+        this._filters[hook].sort((a, b) => a.priority - b.priority);
+    }
+
+    removeFilter(hook, callback) {
+        if (!this._filters[hook]) return;
+        this._filters[hook] = this._filters[hook].filter(h => h.callback !== callback);
+    }
+
+    async applyFilters(hook, value, data = {}) {
+        if (!this._filters[hook]) return value;
+        for (const { callback } of this._filters[hook]) {
+            value = await callback(value, data);
+        }
+        return value;
+    }
+}
+
 // -- Config --------------------------------------------------------------------
 class Config {
     constructor(ctx) {
@@ -3256,10 +3491,12 @@ function makeLogger(events) {
 module.exports = {
     install(ctx) {
         const bus    = new EventBus();
+        const hooks  = new Hooks();
         const config = new Config(ctx);
         const log    = makeLogger(bus);
 
         ctx.provide('events', bus);
+        ctx.provide('hooks',  hooks);
         ctx.provide('config', config);
         ctx.provide('log',    log);
 
@@ -3938,12 +4175,12 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
 '@
 
-$FILE_PLUGINS_CORE_PLUGIN_JSON = @'
+$FILE_PLUGINS_CORE_PLUGIN_COMPUTER = @'
 {
   "id": "core",
   "name": "Core",
   "version": "1.0.0",
-  "description": "Core plugin - event bus, persistent config, logger",
+  "description": "Core plugin - event bus, hooks, persistent config, logger",
   "main": "index.js",
   "dependencies": {},
   "permissions": [
@@ -5319,7 +5556,7 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
 '@
 
-$FILE_PLUGINS_EXAMPLE_PLUGIN_JSON = @'
+$FILE_PLUGINS_EXAMPLE_PLUGIN_COMPUTER = @'
 {
   "id": "example",
   "name": "Example",
@@ -6636,7 +6873,7 @@ load();
 </html>
 '@
 
-$FILE_PLUGINS_MANAGER_PLUGIN_JSON = @'
+$FILE_PLUGINS_MANAGER_PLUGIN_COMPUTER = @'
 {
   "id": "manager",
   "name": "Plugin Manager",
@@ -8446,7 +8683,7 @@ connect();
 </html>
 '@
 
-$FILE_PLUGINS_SETTINGS_PLUGIN_JSON = @'
+$FILE_PLUGINS_SETTINGS_PLUGIN_COMPUTER = @'
 {
   "id": "settings",
   "name": "Settings",
@@ -9172,7 +9409,7 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
 '@
 
-$FILE_PLUGINS_TRAY_PLUGIN_JSON = @'
+$FILE_PLUGINS_TRAY_PLUGIN_COMPUTER = @'
 {
   "id": "tray",
   "name": "System Tray",
@@ -10097,7 +10334,7 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
 '@
 
-$FILE_PLUGINS_UI_PLUGIN_JSON = @'
+$FILE_PLUGINS_UI_PLUGIN_COMPUTER = @'
 {
   "id": "ui",
   "name": "UI",
@@ -10122,30 +10359,30 @@ $FILE_PLUGINS_UI_PLUGIN_JSON = @'
 
 $FILE_MANIFEST['plugins/core/index.js'] = $FILE_PLUGINS_CORE_INDEX_JS
 $FILE_MANIFEST['plugins/core/LICENSE-AGPL3'] = $FILE_PLUGINS_CORE_LICENSE_AGPL3
-$FILE_MANIFEST['plugins/core/plugin.json'] = $FILE_PLUGINS_CORE_PLUGIN_JSON
+$FILE_MANIFEST['plugins/core/plugin.computer'] = $FILE_PLUGINS_CORE_PLUGIN_COMPUTER
 $FILE_MANIFEST['plugins/essentials/bundle.computer'] = $FILE_PLUGINS_ESSENTIALS_BUNDLE_COMPUTER
 $FILE_MANIFEST['plugins/essentials/LICENSE-AGPL3'] = $FILE_PLUGINS_ESSENTIALS_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/example/index.js'] = $FILE_PLUGINS_EXAMPLE_INDEX_JS
 $FILE_MANIFEST['plugins/example/LICENSE-AGPL3'] = $FILE_PLUGINS_EXAMPLE_LICENSE_AGPL3
-$FILE_MANIFEST['plugins/example/plugin.json'] = $FILE_PLUGINS_EXAMPLE_PLUGIN_JSON
+$FILE_MANIFEST['plugins/example/plugin.computer'] = $FILE_PLUGINS_EXAMPLE_PLUGIN_COMPUTER
 $FILE_MANIFEST['plugins/example/todo.txt'] = $FILE_PLUGINS_EXAMPLE_TODO_TXT
 $FILE_MANIFEST['plugins/manager/index.js'] = $FILE_PLUGINS_MANAGER_INDEX_JS
 $FILE_MANIFEST['plugins/manager/LICENSE-AGPL3'] = $FILE_PLUGINS_MANAGER_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/manager/panel.html'] = $FILE_PLUGINS_MANAGER_PANEL_HTML
-$FILE_MANIFEST['plugins/manager/plugin.json'] = $FILE_PLUGINS_MANAGER_PLUGIN_JSON
+$FILE_MANIFEST['plugins/manager/plugin.computer'] = $FILE_PLUGINS_MANAGER_PLUGIN_COMPUTER
 $FILE_MANIFEST['plugins/phone/LICENSE-AGPL3'] = $FILE_PLUGINS_PHONE_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/phone/todo.txt'] = $FILE_PLUGINS_PHONE_TODO_TXT
 $FILE_MANIFEST['plugins/settings/index.js'] = $FILE_PLUGINS_SETTINGS_INDEX_JS
 $FILE_MANIFEST['plugins/settings/LICENSE-AGPL3'] = $FILE_PLUGINS_SETTINGS_LICENSE_AGPL3
 $FILE_MANIFEST['plugins/settings/panel.html'] = $FILE_PLUGINS_SETTINGS_PANEL_HTML
-$FILE_MANIFEST['plugins/settings/plugin.json'] = $FILE_PLUGINS_SETTINGS_PLUGIN_JSON
+$FILE_MANIFEST['plugins/settings/plugin.computer'] = $FILE_PLUGINS_SETTINGS_PLUGIN_COMPUTER
 $FILE_MANIFEST['plugins/tray/index.js'] = $FILE_PLUGINS_TRAY_INDEX_JS
 $FILE_MANIFEST['plugins/tray/LICENSE-AGPL3'] = $FILE_PLUGINS_TRAY_LICENSE_AGPL3
-$FILE_MANIFEST['plugins/tray/plugin.json'] = $FILE_PLUGINS_TRAY_PLUGIN_JSON
+$FILE_MANIFEST['plugins/tray/plugin.computer'] = $FILE_PLUGINS_TRAY_PLUGIN_COMPUTER
 $FILE_MANIFEST['plugins/tray/tray.ps1'] = $FILE_PLUGINS_TRAY_TRAY_PS1
 $FILE_MANIFEST['plugins/ui/index.js'] = $FILE_PLUGINS_UI_INDEX_JS
 $FILE_MANIFEST['plugins/ui/LICENSE-AGPL3'] = $FILE_PLUGINS_UI_LICENSE_AGPL3
-$FILE_MANIFEST['plugins/ui/plugin.json'] = $FILE_PLUGINS_UI_PLUGIN_JSON
+$FILE_MANIFEST['plugins/ui/plugin.computer'] = $FILE_PLUGINS_UI_PLUGIN_COMPUTER
 
 # Copyright (c) 2026 COMPUTER. Provided "AS IS" without warranty. See LICENSE for full terms.
 # --- RichTextBox styled append ----------------------
