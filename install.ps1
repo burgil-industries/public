@@ -2301,7 +2301,7 @@ ${body}
         });
         server.listen(0, '127.0.0.1', () => {
             const { port } = server.address();
-            this._openBrowser(`http://127.0.0.1:${port}/`, 480, type === 'error' ? 340 : 280);
+            this._openBrowser(`http://127.0.0.1:${port}/`, 480, type === 'error' ? 340 : 280, title);
         });
     }
 
@@ -2364,12 +2364,15 @@ ${body}
         return candidates.find(p => { try { fs.accessSync(p); return true; } catch (_) { return false; } }) || null;
     }
 
-    _openBrowser(url, w = 450, h = 380) {
+    _openBrowser(url, w = 450, h = 380, windowTitle = '') {
         const edge = this._findEdge();
         if (edge) {
             // A dedicated profile dir forces Edge to open a fresh window that
             // actually respects --window-size (ignored when a profile is already open).
-            const profileDir = path.join(this.dataDir, 'edge-dialog-profile');
+            const profileDir = path.join(
+                this.dataDir,
+                `edge-dialog-profile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+            );
 
             // Center on primary monitor (best-effort, falls back to 0,0 area)
             let posX = 100, posY = 100;
@@ -2401,52 +2404,42 @@ ${body}
             child.unref();
 
             // Bring the Edge window to foreground after it loads.
-            // Uses HWND_TOPMOST trick: briefly makes the window always-on-top then
-            // restores it - this bypasses the foreground lock entirely.
-            // Retries for up to 6 seconds in case Edge is slow to create its window.
+            // Chromium browsers may hand off --app launches to an existing process,
+            // so AppActivate by PID can target a short-lived launcher process.
+            // Prefer title activation and keep PID as a fallback.
             const pid = child.pid;
-            if (pid) {
-                spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
-                    `Add-Type @"
-using System; using System.Runtime.InteropServices;
-public class FG {
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lp);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
-    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
-    public delegate bool EnumProc(IntPtr h, IntPtr lp);
-    public static IntPtr FindByPid(int pid) {
-        IntPtr found = IntPtr.Zero;
-        EnumWindows((h, lp) => {
-            uint wp; GetWindowThreadProcessId(h, out wp);
-            if ((int)wp == pid && IsWindowVisible(h)) { found = h; return false; }
-            return true;
-        }, IntPtr.Zero);
-        return found;
-    }
-    public static void Activate(IntPtr hwnd) {
-        ShowWindow(hwnd, 9);
-        SetWindowPos(hwnd, (IntPtr)(-1), 0, 0, 0, 0, 0x0003);
-        SetWindowPos(hwnd, (IntPtr)(-2), 0, 0, 0, 0, 0x0003);
-        SetForegroundWindow(hwnd);
-    }
-}
-"@;` +
-                    `$deadline=(Get-Date).AddSeconds(6);` +
-                    `$h=[IntPtr]::Zero;` +
-                    `while((Get-Date)-lt $deadline){` +
-                    `  $h=[FG]::FindByPid(${pid});` +
-                    `  if($h -ne [IntPtr]::Zero){break};` +
-                    `  foreach($c in (Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}" -EA SilentlyContinue)){` +
-                    `    $h=[FG]::FindByPid($c.ProcessId);if($h -ne [IntPtr]::Zero){break}` +
-                    `  };` +
-                    `  if($h -ne [IntPtr]::Zero){break};` +
-                    `  Start-Sleep -Milliseconds 300` +
-                    `};` +
-                    `if($h -ne [IntPtr]::Zero){[FG]::Activate($h)}`
-                ], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+            const title = String(windowTitle || '').trim();
+            if (pid || title) {
+                const vbsTitle = title.replace(/"/g, '""');
+                const vbs = [
+                    'Dim wsh, deadline, activated',
+                    'Set wsh = CreateObject("WScript.Shell")',
+                    `Dim rootPid : rootPid = ${Number(pid || 0)}`,
+                    `Dim winTitle : winTitle = "${vbsTitle}"`,
+                    'deadline = Now() + TimeSerial(0, 0, 8)',
+                    'activated = False',
+                    'Do While Now() < deadline And Not activated',
+                    '    If Len(winTitle) > 0 Then',
+                    '        activated = wsh.AppActivate(winTitle)',
+                    '    End If',
+                    '    If (Not activated) And rootPid > 0 Then',
+                    '        activated = wsh.AppActivate(rootPid)',
+                    '    End If',
+                    '    If Not activated Then WScript.Sleep 250',
+                    'Loop',
+                ].join('\r\n');
+                const tmpVbs = path.join(
+                    process.env.TEMP || process.env.TMP || require('os').tmpdir(),
+                    `computer-focus-${pid}.vbs`
+                );
+                try { fs.writeFileSync(tmpVbs, vbs, 'ascii'); } catch (_) {}
+                const focusProc = spawn('wscript.exe',
+                    ['/nologo', tmpVbs],
+                    { detached: true, stdio: 'ignore', windowsHide: true });
+                focusProc.unref();
+                focusProc.on('close', () => {
+                    try { fs.unlinkSync(tmpVbs); } catch (_) {}
+                });
             }
         } else {
             exec(`cmd /c start "" "${url}"`);
@@ -2549,7 +2542,7 @@ public class FG {
 
             server.listen(0, '127.0.0.1', () => {
                 const { port } = server.address();
-                this._openBrowser(`http://127.0.0.1:${port}/`, winW, winH);
+                this._openBrowser(`http://127.0.0.1:${port}/`, winW, winH, 'Plugin Permissions');
             });
 
             server.on('error', (err) => {
@@ -7993,6 +7986,31 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
 '@
 
+$FILE_PLUGINS_PHONE_PHONE_TXT = @'
+Architectural Design and Engineering of a Native Modular Smartphone Interface for AGI Orchestration via Tauri, React, and ViteThe convergence of high-fidelity virtual environments and native application development has birthed a new paradigm in user interface design. Historically, the most sophisticated mobile operating system simulations were found within the Grand Theft Auto V roleplay community, specifically through frameworks such as the QBCore and Quasar Smartphone ecosystems. These systems, while bounded by the limitations of a game engine, established a gold standard for modularity, aesthetic realism, and functional density. As the industry shifts toward the deployment of Artificial General Intelligence (AGI) modular systems, there is an urgent requirement to export these immersive mobile metaphors into a native desktop environment. This transition leverages the lightweight, secure binary capabilities of the Tauri framework, the performance-optimized build pipeline of Vite, and the component-driven reactivity of React. The resulting system serves as a "command center" for AGI orchestration, providing a recognizable ergonomic interface for managing complex agentic workflows.The Evolutionary Trajectory from Virtual Roleplay to Native AGI HubsThe design philosophy of modern FiveM smartphones, particularly the Quasar (QS) Smartphone PRO and the QB-Phone, centers on delivering a persistent, high-fidelity experience that mirrors real-world hardware like the iPhone 14. These virtual devices are not merely visual overlays but integrated systems utilizing full metadata synchronization to track finances, social interactions, and job-specific utilities. When adapting these designs for an AGI modular system, the phone interface acts as a familiar gateway for a user to interact with a potentially infinite array of specialized AI agents.The QB-Phone framework is characterized by its slot-based application management, where a configuration file defines the grid placement, tooltips, and job-locks for each app. This modular logic is highly compatible with the requirements of an AGI system, where the interface must dynamically load new "capabilities" as they are registered by the orchestrator. Conversely, the QS-Smartphone PRO introduces advanced features such as a dynamic island, live camera streaming, and over 40 distinct applications. Integrating the aesthetic polish of the QS-Smartphone with the structural modularity of the QB-Phone creates a native desktop application that feels like a physical device but functions as a sophisticated AI interface.Structural FeatureFiveM Implementation (QB/QS)Native AGI Implementation (Tauri/React)Framework BaseNUI (CEF/Lua) Tauri (Rust/WebView) Build PipelineStatic assetsVite / TypeScript ModularityConfig-based slots Module Federation / Dynamic Imports Hardware FeelGame Props / 3D models Frameless Transparent Windows InteractionMouse/Keyboard NUI FocusPointer Events / Dnd-kit Long-Press SecurityIn-game permissionsTauri Capability System Foundational Architecture: The Tauri and Rust BackendThe choice of Tauri over Electron for a native smartphone interface is driven by the need for a minimal footprint and maximum security. Tauri does not bundle Chromium; instead, it utilizes the operating system's native webview (WebView2 on Windows, WKWebView on macOS, and WebKitGTK on Linux). This allows the final binary to be as small as 1MB, which is essential for an AGI system that may reside in the background of a host computer.Window Customization for Mobile RealismA critical requirement for this project is achieving a "phone-like" aesthetic on a PC desktop. This necessitates a frameless window with rounded corners and transparency. Through the tauri.conf.json file, the native window decorations are disabled, and transparency is enabled. This configuration forces the developer to implement a custom title bar and drag regions within the React frontend.JSON{
+"app": {
+"windows":
+}
+}
+By utilizing the data-tauri-drag-region attribute, any HTML element can be transformed into a handle for moving the phone window. This allows for the creation of a seamless "phone bezel" that the user can grab to reposition the device on their screen. On macOS, achieving transparent title bars with custom backgrounds may require additional configuration via the cocoa crate in the Rust setup to ensure that the window content extends under the native caption buttons.Security Boundaries and Native CapabilitiesThe Tauri framework employs a robust capability system that limits the frontend's access to the host system. This is paramount for an AGI system that might execute untrusted code or interface with remote agents. Capabilities are defined in JSON or TOML files within the src-tauri/capabilities directory, granting granular permissions for features like file system access, window dragging, and network requests. For a smartphone application, specific permissions like core:window:allow-start-dragging and camera:allow-capture must be explicitly enabled to allow the React UI to interact with the underlying hardware.Frontend Engineering with React and ViteThe frontend is scaffolded as a React-Vite project, prioritizing speed and modern development ergonomics. Vite's use of esbuild for pre-bundling dependencies and its native ESM-based Hot Module Replacement (HMR) ensure that the developer can iterate on complex UI transitions with sub-50ms feedback loops. React’s component-based architecture is ideally suited for a smartphone simulation, where the status bar, app grid, and navigation gestures are managed as independent, reactive states.The Dynamic Modular Application EcosystemA hallmark of both the QB-Phone and QS-Smartphone frameworks is the ability to install and manage apps dynamically. In a native AGI context, this is implemented through a combination of a central App Registry and Vite’s dynamic import capabilities.Module Federation: To allow third-party developers or different AGI sub-systems to build their own apps, the project utilizes the @originjs/vite-plugin-federation. This allows the "Host" phone app to load "Remote" components at runtime.Dynamic Import Registry: The phone maintains a registry of installed apps. When a user taps an icon, the system uses React.lazy() to asynchronously load the component from a remote URL or a local chunk.App Sandboxing: While the apps share the same DOM, they are isolated through the React context, ensuring that a crash in one modular app—such as a data-heavy AGI analytics tool—does not bring down the entire phone interface.State Management for a Persistent OS ExperienceA realistic smartphone must maintain its state across sessions. This includes the placement of icons, the wallpaper, open chat threads, and unread notifications. By combining React's useContext with local storage or a Tauri-backed database (such as SQLite), the phone can simulate a persistent operating system. The "PhoneApplications" configuration object, inspired by the EF-Phone's Config.lua, serves as the source of truth for the UI layout.Application PropertyData TypePurposeidstringUnique identifier for routing and state.labelstringDisplay name in the grid and tooltips.iconstringFontAwesome or SVG icon identifier.slotnumberDetermines the 1-20 position on the grid.jobLockboolean/stringRestricts access based on user role or AGI tier.isNativebooleanIndicates if the app is built-in or dynamically loaded.Interaction Design: Mimicking the Mobile Touch MetaphorThe primary interaction challenge in a desktop-hosted smartphone is bridging the gap between mouse inputs and touch gestures. Specifically, the request for a "hold to drag" feature requires a sophisticated event listener system.Implementation of Long-Press and Drag-and-DropUsing the dnd-kit library, the phone implements a draggable grid that activates only after a sustained press. This is achieved by configuring the PointerSensor with an activationConstraint. The mathematical threshold for a long-press is defined by a delay 
+t
+t and a movement tolerance 
+d
+d. If the user holds the pointer for 
+t
+≥
+500
+m
+s
+t≥500ms without moving more than 
+d
+≤
+5
+p
+x
+d≤5px, the "Edit Mode" is triggered.During the drag, the system must calculate the collision between the active icon and the potential drop zones (slots). The rectIntersection or pointerWithin algorithms in dnd-kit are used to determine if an icon should shift positions to make room for the being-dragged element. This provides a fluid, high-performance reordering experience that mirrors the iOS or Android home screen.Navigation and Gesture PatternsThe UI includes a global search bar and navigation buttons (Home, Back, Recents), which can be toggled via keyboard shortcuts or on-screen touch targets. The search functionality is split into two layers:Local Search: Filters the icons currently on the screen.Global/Google Search: Queries an external API or the AGI's knowledge base, rendering results within an integrated "Browser" app.The Core Application Suite: Native FunctionalityA fully-fledged smartphone requires a set of robust "Native" applications that demonstrate the system's utility within an AGI context.Messages and Communication HubThe messaging app is the central interface for the AGI modular system. It supports:Thread Management: Organizing conversations with different AGI nodes or human contacts.Rich Media: Sending and receiving images from the "Gallery" or real-time AGI-generated assets.Search: A global search bar allows users to find specific information within thousands of past AGI logs.Gallery and Media ManagementThe "Gallery" app provides a view into the application's local storage. Images captured by the "Camera" app or downloaded by the AGI are indexed and displayed in a responsive grid. In an AGI system, this gallery often contains visual reasoning outputs, screenshots of the user's desktop, or AI-generated artwork.The Camera App and Selfie IntegrationThe "Camera" application is a sophisticated module that interacts directly with the host's hardware.MediaStream API: The React frontend uses navigator.mediaDevices.getUserMedia to access the camera.Selfie Mode: When the user switches to the front-facing (selfie) mode, a CSS transform scaleX(-1) is applied to the video element to provide a natural mirrored preview.Tauri Integration: To handle camera permissions across platform-specific APIs (DirectShow, AVFoundation, V4L2), the project can utilize a plugin like crabcamera. This ensures that even in a sandboxed native environment, the camera remains accessible and high-performing.AGI Integration: The Future of Modular InterfacesThe ultimate purpose of this phone interface is to serve as the GUI for an AGI modular system. Unlike traditional apps, AGI-driven apps may not have a static UI. Instead, they utilize the A2UI protocol (Agent-to-UI) to generate interfaces on the fly.A2UI and Generative InterfacesThe A2UI protocol allows an AGI agent to send a JSON "recipe" that describes a required UI state. The smartphone app acts as the renderer, mapping abstract JSON components (e.g., "User Profile Card," "Action Button") to native React widgets that match the phone's design system. This ensures that the AI can present the user with a tailored interface for specific tasks—such as a complex financial dashboard or a system diagnostic tool—without the developer having to hard-code every possible screen.ReAct Prompting and Action OrchestrationThe AGI uses the ReAct framework to reason about the user's request and take actions through the smartphone's API. If a user asks the AGI to "Find the photo I took yesterday and send it to my manager," the agent:Reasons: It identifies the need to access the "Gallery" and the "Messages" app.Acts: It triggers a search in the gallery's metadata, identifies the image, and then invokes a Tauri command to send the file via the messaging bridge.Engineering the "PC Smartphone" ExperienceTo ensure the interface feels native to the PC, the project incorporates several desktop-specific enhancements.High-Performance RenderingBy utilizing Vite and React, the UI can maintain a consistent 60 FPS even during complex grid reordering or while streaming video. Vite’s pre-bundling with esbuild ensures that the "cold start" of the phone application is nearly instantaneous, a critical factor for a tool intended for constant use.Aesthetic Polish and CustomizationDrawing from the QS-Smartphone PRO's premium design, the React project includes a "Settings" app where users can customize themes, wallpapers, and icon packs. The "Dynamic Island" at the top of the screen provides a persistent area for background notifications, such as a "Thinking..." status for the AGI or a progress bar for a file download.Platform-Specific OptimizationTauri allows for platform-specific configurations, such as adjusting the TitleBarStyle on macOS to Transparent or Overlay. This allows the phone's content to fill the entire window, with the native "close" and "minimize" buttons floating over the UI, providing a seamless integration with the host OS while maintaining the phone's unique aspect ratio.Conclusion: A Modular Command Center for the AGI EraThe construction of a native smartphone interface for AGI systems represents a significant leap forward in ergonomic software design. By synthesizing the visual excellence and modular logic of the QB and QS FiveM frameworks with the native performance of Tauri and the flexibility of React-Vite, developers can create a tool that is both highly functional and deeply intuitive. The transition from game-engine CEF environments to native binaries ensures that the interface is lightweight, secure, and deeply integrated with the host operating system. Furthermore, the inclusion of dynamic module federation and the A2UI protocol prepares the interface for a future where applications are not static files, but generative states managed by Artificial General Intelligence. This smartphone on the desktop is no longer just a roleplay tool; it is the primary bridge between human intent and machine agency.
+'@
+
 $FILE_PLUGINS_PHONE_TODO_TXT = @'
 Under construction
 '@
@@ -10806,6 +10824,7 @@ $FILE_MANIFEST['plugins/manager/LICENSE-AGPL3'] = $FILE_PLUGINS_MANAGER_LICENSE_
 $FILE_MANIFEST['plugins/manager/panel.html'] = $FILE_PLUGINS_MANAGER_PANEL_HTML
 $FILE_MANIFEST['plugins/manager/plugin.computer'] = $FILE_PLUGINS_MANAGER_PLUGIN_COMPUTER
 $FILE_MANIFEST['plugins/phone/LICENSE-AGPL3'] = $FILE_PLUGINS_PHONE_LICENSE_AGPL3
+$FILE_MANIFEST['plugins/phone/phone.txt'] = $FILE_PLUGINS_PHONE_PHONE_TXT
 $FILE_MANIFEST['plugins/phone/todo.txt'] = $FILE_PLUGINS_PHONE_TODO_TXT
 $FILE_MANIFEST['plugins/settings/index.js'] = $FILE_PLUGINS_SETTINGS_INDEX_JS
 $FILE_MANIFEST['plugins/settings/LICENSE-AGPL3'] = $FILE_PLUGINS_SETTINGS_LICENSE_AGPL3
